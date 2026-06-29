@@ -1,0 +1,31 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# next.js
+.next/
+out/
+build/
+dist/
+
+# secrets — NEVER commit these
+.env
+.env.local
+.env*.local
+.env.development
+.env.production
+
+# database / local data — NEVER commit (contains personal task + points data)
+*.db
+*.sqlite
+*.sqlite3
+data/
+*.db-journal
+
+# misc
+.DS_Store
+*.log
+npm-debug.log*
+.vercel
+coverage/
