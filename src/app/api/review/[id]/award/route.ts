@@ -10,17 +10,20 @@ export async function POST(
     const { id } = await params;
     const body = (await req.json()) as { points?: number };
     const points = Number(body.points);
-    if (!Number.isInteger(points) || points < 1) {
+    if (!Number.isInteger(points) || points < 1 || points > 100000) {
       return NextResponse.json(
-        { error: "Points must be an integer >= 1" },
+        { error: "Points must be an integer between 1 and 100000" },
         { status: 400 }
       );
     }
     const result = awardPendingReview(id, points);
     return NextResponse.json({ ok: true, newBalance: result.newBalance });
   } catch (err) {
-    const message = (err as Error).message;
-    const status = message.includes("not found") ? 404 : 500;
-    return NextResponse.json({ error: message }, { status });
+    console.error(err);
+    const status = (err as Error).message.includes("not found") ? 404 : 500;
+    return NextResponse.json(
+      { error: "Failed to award points" },
+      { status }
+    );
   }
 }

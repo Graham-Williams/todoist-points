@@ -151,8 +151,8 @@ export function awardPendingReview(
   completionId: string,
   points: number
 ): { ok: true; newBalance: number } {
-  if (!Number.isInteger(points) || points < 1) {
-    throw new Error("Points must be a positive integer");
+  if (!Number.isInteger(points) || points < 1 || points > 100000) {
+    throw new Error("Points must be a positive integer no greater than 100000");
   }
   const db = getDb();
   const tx = db.transaction(() => {

@@ -6,8 +6,9 @@ export async function GET() {
   try {
     return NextResponse.json({ tasks: getPendingReview() });
   } catch (err) {
+    console.error(err);
     return NextResponse.json(
-      { error: (err as Error).message },
+      { error: "Failed to load review queue" },
       { status: 500 }
     );
   }

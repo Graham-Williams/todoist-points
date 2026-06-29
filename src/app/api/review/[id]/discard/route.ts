@@ -12,8 +12,9 @@ export async function POST(
     discardPendingReview(id);
     return NextResponse.json({ ok: true });
   } catch (err) {
+    console.error(err);
     return NextResponse.json(
-      { error: (err as Error).message },
+      { error: "Failed to discard task" },
       { status: 500 }
     );
   }
