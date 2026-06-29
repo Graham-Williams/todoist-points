@@ -87,7 +87,15 @@ export async function POST() {
   }
 }
 
-// Todoist v1 expects naive timestamps like 2026-06-28T23:59:59 (no timezone).
+// Todoist's by_completion_date interprets naive since/until in the ACCOUNT'S
+// LOCAL timezone, NOT UTC. So we must emit LOCAL wall-clock components — using
+// toISOString() (UTC) here shifts the window by the local offset and drops
+// recently-completed tasks. last_sync is stored in this same local format, so
+// `new Date(value)` (which parses a naive ISO string as local) round-trips
+// correctly. Assumes the machine's timezone matches the Todoist account's.
 function formatTodoistTs(d: Date): string {
-  return d.toISOString().slice(0, 19);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(
+    d.getHours()
+  )}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
