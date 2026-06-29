@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import "./globals.css";
+import ReviewNavLink from "./ReviewNavLink";
 
 export const metadata: Metadata = {
   title: "Todoist Points",
@@ -36,6 +37,7 @@ export default function RootLayout({
                   {l.label}
                 </Link>
               ))}
+              <ReviewNavLink />
             </div>
           </nav>
         </header>
