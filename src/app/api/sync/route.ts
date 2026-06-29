@@ -49,15 +49,22 @@ export async function POST() {
       for (const task of completed) {
         if (alreadyProcessed.get(task.id)) continue;
         const labels = task.labels ?? [];
+        // Multi-label task earns the MAX of its labels' point values
+        // (single label = that value; no labels = 0).
         const earned = labels.reduce(
-          (sum, name) => sum + (pointsMap[name] ?? 0),
+          (max, name) => Math.max(max, pointsMap[name] ?? 0),
           0
         );
-        const labelDesc = labels.length ? ` [${labels.join(", ")}]` : "";
-        insertLedger.run(earned, task.id, `${task.content}${labelDesc}`);
+        // Tasks that earn 0 points are invisible to the app: never recorded
+        // in the ledger, never displayed. We still mark them processed so they
+        // are skipped on future syncs (no retroactive scoring by design).
+        if (earned > 0) {
+          const labelDesc = labels.length ? ` [${labels.join(", ")}]` : "";
+          insertLedger.run(earned, task.id, `${task.content}${labelDesc}`);
+          newlyProcessed += 1;
+          pointsAwarded += earned;
+        }
         markProcessed.run(task.id);
-        newlyProcessed += 1;
-        pointsAwarded += earned;
       }
       db.prepare(
         `INSERT INTO sync_state (key, value) VALUES ('last_sync', ?)

@@ -32,9 +32,13 @@ export interface DashboardStats {
 
 export function getStats(): DashboardStats {
   const db = getDb();
+  // Only pointed (>0) earnings count. Non-pointed completions are never
+  // recorded, but filter defensively so any stale rows stay invisible.
   const earned =
     (db
-      .prepare(`SELECT COALESCE(SUM(points), 0) AS s FROM ledger WHERE type = 'earn'`)
+      .prepare(
+        `SELECT COALESCE(SUM(points), 0) AS s FROM ledger WHERE type = 'earn' AND points > 0`
+      )
       .get() as { s: number }).s ?? 0;
   // redeem rows store negative points, so spent = -SUM.
   const spent =
@@ -44,7 +48,7 @@ export function getStats(): DashboardStats {
 
   const recentEarnings = db
     .prepare(
-      `SELECT * FROM ledger WHERE type = 'earn' ORDER BY id DESC LIMIT 20`
+      `SELECT * FROM ledger WHERE type = 'earn' AND points > 0 ORDER BY id DESC LIMIT 20`
     )
     .all() as LedgerEntry[];
 
