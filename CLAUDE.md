@@ -19,10 +19,27 @@ Points are assigned **per Todoist label**, NOT by priority. The app reads the us
 ## Run / test
 
 > Keep this section updated as the project gains commands.
-- Install: `npm install`
+
+First-time setup:
+1. `npm install`
+2. `cp .env.example .env` and set `TODOIST_API_TOKEN` to your real token (`.env` is gitignored).
+
+Commands:
 - Dev server: `npm run dev` → http://localhost:3000
-- Build: `npm run build`
+- Production build: `npm run build` (then `npm run start` to serve the build)
 - Lint: `npm run lint`
+
+The SQLite DB is created automatically at `./data/todoist-points.db` on first run (schema self-initializes). Both `.env` and `data/` are gitignored — never commit them.
+
+### App structure
+- `src/lib/db.ts` — better-sqlite3 connection + schema init (`label_points`, `ledger`, `rewards`, `processed_completions`, `sync_state`).
+- `src/lib/todoist.ts` — server-only Todoist v1 client (labels via `{results,next_cursor}`; completed tasks via `/tasks/completed/by_completion_date` returning `{items,next_cursor}`).
+- `src/lib/queries.ts` — ledger/stats/rewards read helpers.
+- Pages: `/` (dashboard), `/labels` (point config), `/rewards` (store).
+- API routes under `src/app/api/`: `labels`, `sync`, `rewards`, `rewards/[id]`, `rewards/[id]/redeem`, `dashboard`.
+
+### Points model (as built)
+Multi-label task = **sum** of its labels' point values. No-label or all-zero = 0 points but still marked processed. Sync is idempotent via `processed_completions` (keyed on Todoist completion id), so re-syncing never double-counts. Redeem checks `balance >= cost` before recording a negative ledger entry.
 
 ## Git workflow (matches Graham's global rules)
 
