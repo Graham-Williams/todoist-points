@@ -3,8 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-// Auto-sync interval: poll Todoist completions every 3 minutes while the app is open.
-const SYNC_INTERVAL_MS = 3 * 60 * 1000;
+// Auto-sync interval: poll Todoist completions every 15 seconds while the tab is
+// active (paused when the tab is hidden — see visibility handling below).
+const SYNC_INTERVAL_MS = 15 * 1000;
 // How often to re-render the "last synced" relative time so it stays fresh.
 const CLOCK_TICK_MS = 15 * 1000;
 
@@ -47,11 +48,22 @@ export default function AutoSync() {
     }
   }, [router]);
 
-  // Sync once on mount, then on a fixed interval while the app is open.
+  // Sync once on mount, then on a fixed interval — but only while the tab is
+  // visible, and immediately when the tab regains focus. Keeps points fresh
+  // without burning API calls in a backgrounded tab.
   useEffect(() => {
     void sync();
-    const id = setInterval(() => void sync(), SYNC_INTERVAL_MS);
-    return () => clearInterval(id);
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible") void sync();
+    }, SYNC_INTERVAL_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void sync();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [sync]);
 
   // Keep the relative "last synced" label fresh without a full sync.
