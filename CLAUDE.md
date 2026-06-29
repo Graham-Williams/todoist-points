@@ -36,6 +36,7 @@ The SQLite DB is created automatically at `./data/todoist-points.db` on first ru
 - `src/lib/todoist.ts` — server-only Todoist v1 client (labels via `{results,next_cursor}`; completed tasks via `/tasks/completed/by_completion_date` returning `{items,next_cursor}`).
 - `src/lib/queries.ts` — ledger/stats/rewards read helpers.
 - Pages: `/` (dashboard), `/labels` (point config), `/rewards` (store).
+- `src/app/AutoSync.tsx` — `"use client"` component on the dashboard. Auto-syncs on mount and every ~3 min via `POST /api/sync`, calling `router.refresh()` after each to re-render the server component with new points. Overlapping syncs are guarded by an in-flight ref. Shows a subtle status ("Syncing…" / "Last synced: <relative time>") and keeps a manual "Sync now" button as a fallback (no longer required for normal use).
 - API routes under `src/app/api/`: `labels`, `sync`, `rewards`, `rewards/[id]`, `rewards/[id]/redeem`, `dashboard`.
 
 ### Points model (as built)
