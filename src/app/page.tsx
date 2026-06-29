@@ -1,5 +1,5 @@
 import { getStats } from "@/lib/queries";
-import SyncButton from "./SyncButton";
+import AutoSync from "./AutoSync";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +18,7 @@ export default function DashboardPage() {
     <div className="space-y-8">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Dashboard</h1>
-        <SyncButton />
+        <AutoSync />
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -31,7 +31,8 @@ export default function DashboardPage() {
         <h2 className="mb-3 text-lg font-semibold">Recent earnings</h2>
         {stats.recentEarnings.length === 0 ? (
           <p className="text-sm text-slate-500">
-            Nothing yet. Configure label points, then hit “Sync completed tasks”.
+            Nothing yet. Configure label points and complete some tasks — points
+            sync in automatically.
           </p>
         ) : (
           <ul className="divide-y divide-slate-800 rounded-xl border border-slate-800">
