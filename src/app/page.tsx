@@ -1,5 +1,5 @@
 import { getStats } from "@/lib/queries";
-import AutoSync from "./AutoSync";
+import DashboardRefresh from "./DashboardRefresh";
 
 export const dynamic = "force-dynamic";
 
@@ -16,9 +16,9 @@ export default function DashboardPage() {
   const stats = getStats();
   return (
     <div className="space-y-8">
+      <DashboardRefresh />
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Dashboard</h1>
-        <AutoSync />
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

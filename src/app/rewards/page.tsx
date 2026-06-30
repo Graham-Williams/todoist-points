@@ -15,6 +15,11 @@ export default function RewardsPage() {
   const [name, setName] = useState("");
   const [cost, setCost] = useState("");
   const [status, setStatus] = useState<string | null>(null);
+  // Inline cost editing: which reward is being edited, its draft value, and an
+  // in-flight guard so controls disable while the PATCH is pending.
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editCost, setEditCost] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
 
   const load = useCallback(async () => {
     const [rRes, dRes] = await Promise.all([
@@ -29,6 +34,10 @@ export default function RewardsPage() {
 
   useEffect(() => {
     load();
+    // Refetch when the global AutoSync reports new data.
+    const onSynced = () => load();
+    window.addEventListener("todoist:synced", onSynced);
+    return () => window.removeEventListener("todoist:synced", onSynced);
   }, [load]);
 
   async function addReward(e: React.FormEvent) {
@@ -73,6 +82,43 @@ export default function RewardsPage() {
   async function remove(id: number) {
     await fetch(`/api/rewards/${id}`, { method: "DELETE" });
     load();
+  }
+
+  function startEdit(r: Reward) {
+    setStatus(null);
+    setEditingId(r.id);
+    setEditCost(String(r.cost));
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditCost("");
+  }
+
+  async function saveCost(id: number) {
+    const n = parseInt(editCost, 10);
+    if (!Number.isInteger(n) || n < 1) {
+      setStatus("Cost must be a whole number of at least 1.");
+      return;
+    }
+    setStatus(null);
+    setEditBusy(true);
+    try {
+      const res = await fetch(`/api/rewards/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cost: n }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setStatus(data.error ?? "Failed to update cost");
+        return;
+      }
+      cancelEdit();
+      await load();
+    } finally {
+      setEditBusy(false);
+    }
   }
 
   return (
@@ -132,7 +178,43 @@ export default function RewardsPage() {
           >
             <div className="min-w-0">
               <div className="truncate text-sm text-slate-100">{r.name}</div>
-              <div className="text-xs text-slate-400">{r.cost} pts</div>
+              {editingId === r.id ? (
+                <div className="mt-1 flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    value={editCost}
+                    onChange={(e) => setEditCost(e.target.value)}
+                    disabled={editBusy}
+                    className="w-24 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-right text-xs text-white focus:border-emerald-500 focus:outline-none disabled:opacity-50"
+                  />
+                  <span className="text-xs text-slate-400">pts</span>
+                  <button
+                    onClick={() => saveCost(r.id)}
+                    disabled={editBusy}
+                    className="rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-40"
+                  >
+                    {editBusy ? "Saving…" : "Save"}
+                  </button>
+                  <button
+                    onClick={cancelEdit}
+                    disabled={editBusy}
+                    className="rounded-md border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-0.5 flex items-center gap-2">
+                  <span className="text-xs text-slate-400">{r.cost} pts</span>
+                  <button
+                    onClick={() => startEdit(r)}
+                    className="text-xs text-slate-500 hover:text-slate-300"
+                  >
+                    Edit
+                  </button>
+                </div>
+              )}
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <button

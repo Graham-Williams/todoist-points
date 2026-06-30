@@ -91,3 +91,97 @@ export function getRewards(): Reward[] {
     .prepare(`SELECT * FROM rewards ORDER BY active DESC, id DESC`)
     .all() as Reward[];
 }
+
+export interface PendingReviewRow {
+  completion_id: string;
+  content: string;
+  labels: string[];
+  completed_at: string | null;
+}
+
+interface PendingReviewDbRow {
+  completion_id: string;
+  content: string;
+  labels: string | null;
+  completed_at: string | null;
+}
+
+function parseLabels(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+// All completions awaiting manual review (synced with 0 points), newest
+// completed first. Labels JSON is parsed to an array for the client.
+export function getPendingReview(): PendingReviewRow[] {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT completion_id, content, labels, completed_at
+       FROM pending_review
+       ORDER BY completed_at DESC, created_at DESC`
+    )
+    .all() as PendingReviewDbRow[];
+  return rows.map((r) => ({
+    completion_id: r.completion_id,
+    content: r.content,
+    labels: parseLabels(r.labels),
+    completed_at: r.completed_at,
+  }));
+}
+
+export function getPendingReviewCount(): number {
+  const db = getDb();
+  return (
+    db.prepare(`SELECT COUNT(*) AS c FROM pending_review`).get() as {
+      c: number;
+    }
+  ).c;
+}
+
+// Manually award points to a queued completion: record an 'earn' ledger row
+// and drop it from the review queue. The completion stays in
+// processed_completions, so it is never re-queued. Returns the new balance.
+export function awardPendingReview(
+  completionId: string,
+  points: number
+): { ok: true; newBalance: number } {
+  if (!Number.isInteger(points) || points < 1 || points > 100000) {
+    throw new Error("Points must be a positive integer no greater than 100000");
+  }
+  const db = getDb();
+  const tx = db.transaction(() => {
+    const row = db
+      .prepare(
+        `SELECT content FROM pending_review WHERE completion_id = ?`
+      )
+      .get(completionId) as { content: string } | undefined;
+    if (!row) {
+      throw new Error("Pending review item not found");
+    }
+    db.prepare(
+      `INSERT INTO ledger (type, points, source_id, description)
+       VALUES ('earn', ?, ?, ?)`
+    ).run(points, completionId, `${row.content} (manual review)`);
+    db.prepare(`DELETE FROM pending_review WHERE completion_id = ?`).run(
+      completionId
+    );
+  });
+  tx();
+  return { ok: true, newBalance: getBalance() };
+}
+
+// Discard a queued completion without awarding points. It stays in
+// processed_completions so it won't be re-added on the next sync.
+export function discardPendingReview(completionId: string): { ok: true } {
+  const db = getDb();
+  db.prepare(`DELETE FROM pending_review WHERE completion_id = ?`).run(
+    completionId
+  );
+  return { ok: true };
+}

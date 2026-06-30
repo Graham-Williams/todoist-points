@@ -41,6 +41,11 @@ export async function POST() {
     const insertLedger = db.prepare(
       `INSERT INTO ledger (type, points, source_id, description) VALUES ('earn', ?, ?, ?)`
     );
+    const insertPendingReview = db.prepare(
+      `INSERT OR IGNORE INTO pending_review
+         (completion_id, content, labels, completed_at, created_at)
+       VALUES (?, ?, ?, ?, datetime('now'))`
+    );
 
     let newlyProcessed = 0;
     let pointsAwarded = 0;
@@ -55,14 +60,23 @@ export async function POST() {
           (max, name) => Math.max(max, pointsMap[name] ?? 0),
           0
         );
-        // Tasks that earn 0 points are invisible to the app: never recorded
-        // in the ledger, never displayed. We still mark them processed so they
-        // are skipped on future syncs (no retroactive scoring by design).
+        // Tasks that earn 0 points used to be invisible. Now, instead of
+        // silently dropping them, we queue them for manual review so the user
+        // can assign a points value or discard them ("going forward only" —
+        // no retroactive scoring of history). They are still marked processed
+        // so they are skipped on future syncs.
         if (earned > 0) {
           const labelDesc = labels.length ? ` [${labels.join(", ")}]` : "";
           insertLedger.run(earned, task.id, `${task.content}${labelDesc}`);
           newlyProcessed += 1;
           pointsAwarded += earned;
+        } else {
+          insertPendingReview.run(
+            task.id,
+            task.content,
+            JSON.stringify(labels),
+            task.completed_at ?? null
+          );
         }
         markProcessed.run(task.id);
       }
@@ -73,11 +87,18 @@ export async function POST() {
     });
     tx();
 
+    const pendingReview = (
+      db
+        .prepare(`SELECT COUNT(*) AS c FROM pending_review`)
+        .get() as { c: number }
+    ).c;
+
     return NextResponse.json({
       ok: true,
       scanned: completed.length,
       newlyProcessed,
       pointsAwarded,
+      pendingReview,
     });
   } catch (err) {
     return NextResponse.json(

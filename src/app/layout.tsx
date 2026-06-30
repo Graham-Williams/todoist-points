@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import "./globals.css";
+import AutoSync from "./AutoSync";
+import ReviewNavLink from "./ReviewNavLink";
 
 export const metadata: Metadata = {
   title: "Todoist Points",
@@ -36,6 +38,12 @@ export default function RootLayout({
                   {l.label}
                 </Link>
               ))}
+              <ReviewNavLink />
+            </div>
+            {/* Single global auto-sync loop; drives all pages via the
+                `todoist:synced` event it emits after each successful sync. */}
+            <div className="ml-auto">
+              <AutoSync />
             </div>
           </nav>
         </header>

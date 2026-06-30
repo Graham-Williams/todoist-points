@@ -39,6 +39,14 @@ function initSchema(db: Database.Database) {
       key   TEXT PRIMARY KEY,
       value TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS pending_review (
+      completion_id TEXT PRIMARY KEY,
+      content       TEXT NOT NULL,
+      labels        TEXT,
+      completed_at  TEXT,
+      created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 }
 
