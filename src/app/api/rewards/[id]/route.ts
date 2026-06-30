@@ -27,8 +27,15 @@ export async function PATCH(
       values.push(body.name.trim());
     }
     if (body.cost !== undefined) {
+      const cost = Math.trunc(Number(body.cost));
+      if (!Number.isFinite(cost) || cost < 1) {
+        return NextResponse.json(
+          { error: "Cost must be a positive integer" },
+          { status: 400 }
+        );
+      }
       sets.push("cost = ?");
-      values.push(Math.trunc(Number(body.cost) || 0));
+      values.push(cost);
     }
     if (body.active !== undefined) {
       sets.push("active = ?");

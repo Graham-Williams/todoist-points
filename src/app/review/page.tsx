@@ -43,6 +43,10 @@ export default function ReviewPage() {
 
   useEffect(() => {
     load();
+    // Refetch the pending queue when the global AutoSync reports new data.
+    const onSynced = () => load();
+    window.addEventListener("todoist:synced", onSynced);
+    return () => window.removeEventListener("todoist:synced", onSynced);
   }, [load]);
 
   function setPointValue(id: string, value: string) {
@@ -52,8 +56,8 @@ export default function ReviewPage() {
   async function award(id: string) {
     const raw = points[id] ?? "1";
     const n = parseInt(raw, 10);
-    if (!Number.isInteger(n) || n < 1) {
-      setError("Points must be a whole number of at least 1.");
+    if (!Number.isInteger(n) || n < 0) {
+      setError("Points must be a whole number of 0 or more (0 = discard).");
       return;
     }
     setError(null);
@@ -105,7 +109,7 @@ export default function ReviewPage() {
 
       <p className="text-sm text-slate-400">
         Completed tasks that earned no points — assign a value or discard.
-        Discarded tasks won’t come back.
+        Enter 0 to discard. Discarded tasks won’t come back.
       </p>
 
       {loading && <p className="text-slate-500">Loading…</p>}
@@ -145,9 +149,11 @@ export default function ReviewPage() {
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
+                <span className="text-xs text-slate-500">0 = discard</span>
                 <input
                   type="number"
-                  min={1}
+                  min={0}
+                  title="0 = discard"
                   value={points[t.completion_id] ?? "1"}
                   onChange={(e) =>
                     setPointValue(t.completion_id, e.target.value)

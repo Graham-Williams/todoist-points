@@ -23,10 +23,13 @@ export default function ReviewNavLink() {
     };
     load();
     const onFocus = () => load();
+    const onSynced = () => load();
     window.addEventListener("focus", onFocus);
+    window.addEventListener("todoist:synced", onSynced);
     return () => {
       cancelled = true;
       window.removeEventListener("focus", onFocus);
+      window.removeEventListener("todoist:synced", onSynced);
     };
   }, []);
 

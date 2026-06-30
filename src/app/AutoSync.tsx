@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 // Auto-sync interval: poll Todoist completions every 15 seconds while the tab is
@@ -20,7 +19,6 @@ function relativeTime(from: number, now: number): string {
 }
 
 export default function AutoSync() {
-  const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [lastSynced, setLastSynced] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -39,14 +37,17 @@ export default function AutoSync() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Sync failed");
       setLastSynced(Date.now());
-      router.refresh();
+      // Notify every view to refetch its data. A single global AutoSync (in the
+      // layout header) drives all pages via this event — see DashboardRefresh,
+      // the labels/rewards/review pages, and ReviewNavLink.
+      window.dispatchEvent(new CustomEvent("todoist:synced"));
     } catch (err) {
       setError((err as Error).message);
     } finally {
       inFlight.current = false;
       setBusy(false);
     }
-  }, [router]);
+  }, []);
 
   // Sync once on mount, then on a fixed interval — but only while the tab is
   // visible, and immediately when the tab regains focus. Keeps points fresh

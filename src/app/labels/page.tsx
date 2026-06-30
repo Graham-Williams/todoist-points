@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 interface LabelRow {
   name: string;
@@ -15,20 +15,27 @@ export default function LabelsPage() {
   const [status, setStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch("/api/labels");
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? "Failed to load labels");
-        setLabels(data.labels);
-      } catch (err) {
-        setError((err as Error).message);
-      } finally {
-        setLoading(false);
-      }
-    })();
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/labels");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to load labels");
+      setLabels(data.labels);
+      setError(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    load();
+    // Refetch when the global AutoSync reports new data.
+    const onSynced = () => load();
+    window.addEventListener("todoist:synced", onSynced);
+    return () => window.removeEventListener("todoist:synced", onSynced);
+  }, [load]);
 
   function setPoints(name: string, value: string) {
     const n = value === "" ? 0 : parseInt(value, 10);
