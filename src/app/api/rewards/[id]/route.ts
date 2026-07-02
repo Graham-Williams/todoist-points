@@ -49,8 +49,9 @@ export async function PATCH(
     }
     return NextResponse.json({ ok: true });
   } catch (err) {
+    console.error(err);
     return NextResponse.json(
-      { error: (err as Error).message },
+      { error: "Failed to update reward" },
       { status: 500 }
     );
   }
@@ -67,8 +68,9 @@ export async function DELETE(
     db.prepare(`DELETE FROM rewards WHERE id = ?`).run(id);
     return NextResponse.json({ ok: true });
   } catch (err) {
+    console.error(err);
     return NextResponse.json(
-      { error: (err as Error).message },
+      { error: "Failed to delete reward" },
       { status: 500 }
     );
   }

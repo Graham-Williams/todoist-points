@@ -15,8 +15,9 @@ export async function GET() {
     }));
     return NextResponse.json({ labels: merged });
   } catch (err) {
+    console.error(err);
     return NextResponse.json(
-      { error: (err as Error).message },
+      { error: "Failed to load labels" },
       { status: 500 }
     );
   }
@@ -40,8 +41,9 @@ export async function POST(req: Request) {
     tx(Object.entries(points));
     return NextResponse.json({ ok: true });
   } catch (err) {
+    console.error(err);
     return NextResponse.json(
-      { error: (err as Error).message },
+      { error: "Failed to save label points" },
       { status: 500 }
     );
   }

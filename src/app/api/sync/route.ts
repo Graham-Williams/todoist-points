@@ -101,10 +101,8 @@ export async function POST() {
       pendingReview,
     });
   } catch (err) {
-    return NextResponse.json(
-      { error: (err as Error).message },
-      { status: 500 }
-    );
+    console.error(err);
+    return NextResponse.json({ error: "Sync failed" }, { status: 500 });
   }
 }
 

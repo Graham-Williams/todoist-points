@@ -5,7 +5,7 @@
 # a source build if no prebuilt binary exists for this platform/Node combo.
 
 # ---- deps: install node_modules ----
-FROM node:24-bookworm-slim AS deps
+FROM node:24-bookworm-slim@sha256:b31e7a42fdf8b8aa5f5ed477c72d694301273f1069c5a2f71d53c6482e99a2fc AS deps
 WORKDIR /app
 # Toolchain for native modules (better-sqlite3) in case a prebuild isn't available.
 RUN apt-get update \
@@ -15,7 +15,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 # ---- build: compile the Next.js app ----
-FROM node:24-bookworm-slim AS builder
+FROM node:24-bookworm-slim@sha256:b31e7a42fdf8b8aa5f5ed477c72d694301273f1069c5a2f71d53c6482e99a2fc AS builder
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=deps /app/node_modules ./node_modules
@@ -26,7 +26,7 @@ RUN npm run build
 RUN test -f .next/standalone/node_modules/better-sqlite3/build/Release/better_sqlite3.node
 
 # ---- runtime: slim, non-root ----
-FROM node:24-bookworm-slim AS runner
+FROM node:24-bookworm-slim@sha256:b31e7a42fdf8b8aa5f5ed477c72d694301273f1069c5a2f71d53c6482e99a2fc AS runner
 WORKDIR /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \

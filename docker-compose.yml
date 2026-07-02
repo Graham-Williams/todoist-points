@@ -16,6 +16,15 @@ services:
       DB_PATH: /data/todoist-points.db
       # Read from a box-local, gitignored .env next to this file.
       TODOIST_API_TOKEN: ${TODOIST_API_TOKEN:?TODOIST_API_TOKEN must be set}
+      # In-app Cloudflare Access JWT verification (defense in depth — the app
+      # itself rejects any request without a valid Access JWT). The AUD comes
+      # from the box-local .env: it's the Access application's Audience tag,
+      # copied from the Cloudflare Zero Trust dashboard/API once the Access
+      # app for todoist-points.graham-williams.com exists.
+      CF_ACCESS_TEAM_DOMAIN: blue-dream-0427.cloudflareaccess.com
+      CF_ACCESS_AUD: ${CF_ACCESS_AUD:?CF_ACCESS_AUD must be set}
+      # CSRF/origin pin: non-GET requests must carry a matching Origin/Host.
+      APP_HOST: todoist-points.graham-williams.com
     volumes:
       - ./data:/data
 

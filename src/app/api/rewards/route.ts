@@ -28,8 +28,9 @@ export async function POST(req: Request) {
       .run(name, cost);
     return NextResponse.json({ ok: true, id: info.lastInsertRowid });
   } catch (err) {
+    console.error(err);
     return NextResponse.json(
-      { error: (err as Error).message },
+      { error: "Failed to create reward" },
       { status: 500 }
     );
   }

@@ -36,8 +36,9 @@ export async function POST(
 
     return NextResponse.json({ ok: true, newBalance: balance - reward.cost });
   } catch (err) {
+    console.error(err);
     return NextResponse.json(
-      { error: (err as Error).message },
+      { error: "Failed to redeem reward" },
       { status: 500 }
     );
   }
