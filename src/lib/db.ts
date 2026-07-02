@@ -2,8 +2,18 @@ import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
 
-// Single shared DB connection. Lives at ./data/todoist-points.db (gitignored).
+// Single shared DB connection.
+// Path is configurable via DB_PATH (absolute file path, e.g. /data/todoist-points.db
+// inside the Docker container); defaults to ./data/todoist-points.db (gitignored).
 let _db: Database.Database | null = null;
+
+function resolveDbPath(): string {
+  const envPath = process.env.DB_PATH;
+  if (envPath && envPath.trim() !== "") {
+    return path.resolve(envPath);
+  }
+  return path.join(process.cwd(), "data", "todoist-points.db");
+}
 
 function initSchema(db: Database.Database) {
   db.pragma("journal_mode = WAL");
@@ -52,11 +62,12 @@ function initSchema(db: Database.Database) {
 
 export function getDb(): Database.Database {
   if (_db) return _db;
-  const dataDir = path.join(process.cwd(), "data");
+  const dbPath = resolveDbPath();
+  const dataDir = path.dirname(dbPath);
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
   }
-  const db = new Database(path.join(dataDir, "todoist-points.db"));
+  const db = new Database(dbPath);
   initSchema(db);
   _db = db;
   return db;

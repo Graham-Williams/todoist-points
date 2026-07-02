@@ -1,0 +1,22 @@
+# Keep the build context minimal — and keep secrets/data out of the image.
+node_modules
+.next
+data
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+.env
+.env.*
+.git
+.gitignore
+.dockerignore
+Dockerfile
+docker-compose.yml
+DEPLOY.md
+README.md
+CLAUDE.md
+LICENSE
+*.log
+.DS_Store
+coverage

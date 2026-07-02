@@ -26,7 +26,7 @@ First-time setup:
 
 Commands:
 - Dev server: `npm run dev` → http://localhost:3000
-- Production build: `npm run build` (then `npm run start` to serve the build)
+- Production build: `npm run build` — note the config uses `output: "standalone"`, so serve the build with `node .next/standalone/server.js` (`next start` doesn't support standalone output); in production it runs in Docker (see Deployment section)
 - Lint: `npm run lint`
 
 The SQLite DB is created automatically at `./data/todoist-points.db` on first run (schema self-initializes). Both `.env` and `data/` are gitignored — never commit them.
@@ -56,6 +56,17 @@ A completion that earns **0 points** (no labels, or all its labels are worth 0) 
 On the `/review` page, **Assign N** records a normal `earn` ledger row (`source_id` = completion id, description = `"<content> (manual review)"`) and removes the queue row; **Discard** just removes the queue row. Either way the completion stays in `processed_completions`, so it is never re-queued — this is **"going forward only"** (no backfilling of history; only newly-synced 0-point completions enter the queue).
 
 **Assigning 0 = discard.** The award API route (`review/[id]/award`) accepts an integer in **[0, 100000]**. `points === 0` routes to `discardPendingReview` (drop from the queue, no ledger row, balance unchanged) and returns `{ ok, newBalance }`; `points >= 1` awards as normal. `awardPendingReview` keeps its own `>= 1` guard (defense in depth) and runs in a transaction, so 0 can never create a ledger row. The review input has `min={0}` with a "0 = discard" hint; the separate Discard button still exists. Default input value is 1.
+
+## Deployment / self-hosting
+
+Production runs in **Docker** on Graham's Ubuntu home server (Tailscale SSH `graham@100.101.1.28`, app dir `~/todoist-points`), reachable ONLY at **https://todoist-points.graham-williams.com** through the existing Cloudflare Tunnel + Cloudflare Access (one-time PIN). Full runbook: **`DEPLOY.md`**. Key facts:
+
+- `next.config.mjs` uses `output: "standalone"`; the multi-stage `Dockerfile` (node:24-bookworm-slim, non-root `node` user) runs `node server.js` on port 3000 and asserts better-sqlite3's native addon made it into the standalone output.
+- **`DB_PATH` env var** (added for this) points the SQLite file anywhere; default stays `./data/todoist-points.db` for local dev. Compose sets `DB_PATH=/data/todoist-points.db` with `./data` bind-mounted at `/data`.
+- `docker-compose.yml`: single service **named `todoist-points`** — that name is the DNS alias the tunnel ingress targets (`http://todoist-points:3000`), don't rename it. It joins the **external** network `km-tracker_default` (created by the km-tracker compose project, where the cloudflared connector lives). `TODOIST_API_TOKEN` comes from a box-local gitignored `.env`.
+- **Never add `ports:`** — the app has no auth; a published host port would bypass Cloudflare Access on the LAN.
+- Tunnel ingress + Access app live in the Cloudflare API (remotely-managed tunnel), not on the box.
+- Redeploy: `git pull && docker compose up -d --build` from `main`.
 
 ## Git workflow (matches Graham's global rules)
 

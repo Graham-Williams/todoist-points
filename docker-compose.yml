@@ -1,0 +1,27 @@
+# todoist-points — production compose for the home server.
+#
+# The service name `todoist-points` is load-bearing: it is the DNS alias the
+# Cloudflare Tunnel ingress targets (http://todoist-points:3000) over the
+# shared `km-tracker_default` bridge network, where the cloudflared connector
+# (from the km-tracker compose project) also lives.
+services:
+  todoist-points:
+    build: .
+    restart: unless-stopped
+    # NO `ports:` — deliberate (same convention as km-tracker). The app is
+    # reachable ONLY via the Cloudflare Tunnel + Access. Publishing a host
+    # port would expose the app (which has no auth of its own) directly on
+    # the LAN, bypassing Cloudflare Access entirely.
+    environment:
+      DB_PATH: /data/todoist-points.db
+      # Read from a box-local, gitignored .env next to this file.
+      TODOIST_API_TOKEN: ${TODOIST_API_TOKEN:?TODOIST_API_TOKEN must be set}
+    volumes:
+      - ./data:/data
+
+networks:
+  # Join the existing bridge network created by the km-tracker compose
+  # project, so the cloudflared connector can reach this service by name.
+  default:
+    name: km-tracker_default
+    external: true
