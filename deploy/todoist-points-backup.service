@@ -1,0 +1,25 @@
+# Automated Todoist Points DB backup (self-hosted home-server box).
+#
+# Oneshot service driven by todoist-points-backup.timer. Paths assume the repo
+# is checked out at /home/graham/todoist-points. Runs on the HOST as the
+# unprivileged "graham" user (NOT in the container). See DEPLOY.md → "Automated
+# backups".
+[Unit]
+Description=Todoist Points SQLite backup (local snapshot + Drive push)
+# Don't bother running if there's no network at all (the Drive push needs it);
+# the local snapshot still runs and the Drive half just reports an error.
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=graham
+ExecStart=/home/graham/todoist-points/scripts/backup.sh
+# A backup should never hang the system; cap the run time.
+TimeoutStartSec=300
+# Lightweight sandboxing that won't break the script's host/Drive access.
+# (ProtectSystem/ProtectHome are intentionally omitted: they'd require correct
+# ReadWritePaths for ~/todoist-points/data and ~/.config/rclone to stay
+# functional.)
+NoNewPrivileges=true
+PrivateTmp=true
