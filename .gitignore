@@ -9,12 +9,9 @@ out/
 build/
 dist/
 
-# secrets — NEVER commit these
-.env
-.env.local
-.env*.local
-.env.development
-.env.production
+# secrets — NEVER commit these (catch-all; only the placeholder example is tracked)
+.env*
+!.env.example
 
 # database / local data — NEVER commit (contains personal task + points data)
 *.db
