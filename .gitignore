@@ -9,9 +9,12 @@ out/
 build/
 dist/
 
-# secrets — NEVER commit these (catch-all; only the placeholder example is tracked)
+# secrets — NEVER commit these (catch-all; only the placeholder examples are tracked)
 .env*
 !.env.example
+# self-hosted backup config: the real .env.backup is ignored by .env* above;
+# only the placeholder example is committed (it contains no secrets either).
+!.env.backup.example
 
 # database / local data — NEVER commit (contains personal task + points data)
 *.db
@@ -19,6 +22,10 @@ dist/
 *.sqlite3
 data/
 *.db-journal
+*.db-wal
+*.db-shm
+# backup runtime state (checksums, last-push timestamp) on the host
+.backup-state/
 
 # misc
 .DS_Store
