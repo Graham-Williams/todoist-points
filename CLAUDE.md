@@ -77,7 +77,7 @@ The points ledger DB is the **source of truth** (spends/rewards/review decisions
 - **Local tier:** deduped-by-sha256 snapshots in `data/backups/` (`todoist-points_<UTC>.db`), pruned to the newest `LOCAL_RETENTION` (default 100).
 - **Off-box tier:** `rclone copy` to Google Drive (`gdrive:todoist-points-backups`, reusing the box's existing `gdrive` remote that km-tracker set up) — throttled to every `DRIVE_PUSH_INTERVAL_MIN` min (default 15) and only when the DB changed; recent ring buffer pruned to `DRIVE_RETENTION` (default 50), plus a `daily/` long-tail tier (one snapshot/UTC-day, `DAILY_RETENTION` default 30).
 - **Fail-safe:** local snapshot always runs; if rclone isn't configured yet it warns and **exits 0** (won't flap the systemd unit), non-zero only when a configured remote actually errors. Never overwrites a good backup with an empty one.
-- Config: `.env.backup` (gitignored; copy from committed `.env.backup.example` — **no secrets**, the rclone OAuth token lives only in `~/.config/rclone/rclone.conf`). Units: `deploy/todoist-points-backup.{service,timer}` (installed manually on the box, run as `graham`, assume repo at `/home/graham/todoist-points`). Full install/verify/restore steps in **`DEPLOY.md` → Automated backups**.
+- Config: `.env.backup` (gitignored; copy from committed `.env.backup.example` — **no secrets**, the rclone OAuth token lives only in `~/.config/rclone/rclone.conf`). Units: `deploy/todoist-points-backup.{service,timer}` (installed manually on the box, run as `<user>`, assume repo at `/home/<user>/todoist-points` — set `User=`/`ExecStart` before installing). Full install/verify/restore steps in **`DEPLOY.md` → Automated backups**.
 
 ## Git workflow (matches Graham's global rules)
 

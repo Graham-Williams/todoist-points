@@ -167,14 +167,20 @@ token lives in rclone's config.)
 
 ### 4. Install the systemd units
 
+The service unit ships with `<user>` placeholders. **Before installing**, edit
+`deploy/todoist-points-backup.service` and replace `<user>`: set `User=` to the
+box's login user and `ExecStart=` to that user's absolute path to
+`scripts/backup.sh` (i.e. `/home/<login-user>/todoist-points/scripts/backup.sh`).
+Then:
+
 ```bash
 sudo cp deploy/todoist-points-backup.service deploy/todoist-points-backup.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now todoist-points-backup.timer
 ```
 
-The units assume the repo at `/home/graham/todoist-points` and run as user
-`graham`. (Edit `DB_PATH` etc. in `.env.backup` if your paths differ.)
+The units assume the repo at `/home/<user>/todoist-points` and run as user
+`<user>`. (Edit `DB_PATH` etc. in `.env.backup` if your paths differ.)
 
 ### 5. Verify
 
