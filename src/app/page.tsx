@@ -1,5 +1,6 @@
 import { getStats } from "@/lib/queries";
 import DashboardRefresh from "./DashboardRefresh";
+import RemoveEarningButton from "./RemoveEarningButton";
 
 export const dynamic = "force-dynamic";
 
@@ -39,9 +40,10 @@ export default function DashboardPage() {
             {stats.recentEarnings.map((e) => (
               <li key={e.id} className="flex items-center justify-between gap-4 px-4 py-3">
                 <span className="truncate text-sm text-slate-200">{e.description}</span>
-                <span className="shrink-0 font-semibold text-emerald-400">
-                  +{e.points}
-                </span>
+                <div className="flex shrink-0 items-center gap-3">
+                  <span className="font-semibold text-emerald-400">+{e.points}</span>
+                  <RemoveEarningButton id={e.id} />
+                </div>
               </li>
             ))}
           </ul>

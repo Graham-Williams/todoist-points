@@ -176,6 +176,27 @@ export function awardPendingReview(
   return { ok: true, newBalance: getBalance() };
 }
 
+// Remove a single earning from the ledger (e.g. points from a stray/test task).
+// CRITICAL INVARIANT: this deletes the `ledger` row ONLY and leaves
+// `processed_completions` untouched. The earning's source_id is the Todoist
+// completion id, which stays in processed_completions from sync; auto-sync skips
+// any completion already there (see src/app/api/sync/route.ts), so leaving the
+// row is exactly what prevents the removed earning from being re-awarded on the
+// next sync. The `type = 'earn'` clause is a hard guard so this can never delete
+// a `redeem` row (which would inflate the balance).
+export function deleteEarning(
+  id: number
+): { ok: true; deleted: boolean; newBalance: number } {
+  if (!Number.isInteger(id) || id < 1) {
+    throw new Error("id must be a positive integer");
+  }
+  const db = getDb();
+  const result = db
+    .prepare(`DELETE FROM ledger WHERE id = ? AND type = 'earn'`)
+    .run(id);
+  return { ok: true, deleted: result.changes > 0, newBalance: getBalance() };
+}
+
 // Discard a queued completion without awarding points. It stays in
 // processed_completions so it won't be re-added on the next sync.
 export function discardPendingReview(completionId: string): { ok: true } {
