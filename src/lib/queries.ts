@@ -197,6 +197,30 @@ export function deleteEarning(
   return { ok: true, deleted: result.changes > 0, newBalance: getBalance() };
 }
 
+// Edit the points on a single earning (ledger row of type 'earn') by id.
+// INVARIANT: this touches ONLY the ledger row's `points` column. It does NOT
+// touch processed_completions (the completion stays processed, so sync never
+// re-awards it — unchanged by an edit) and does NOT touch source_id /
+// description / type / created_at. The `type = 'earn'` clause is a hard guard so
+// a `redeem` row can never be edited here (editing a redeem id reports
+// updated=false → the route 404s). Balance re-derives from SUM(points).
+export function updateEarningPoints(
+  id: number,
+  points: number
+): { ok: true; updated: boolean; newBalance: number } {
+  if (!Number.isInteger(id) || id < 1) {
+    throw new Error("id must be a positive integer");
+  }
+  if (!Number.isInteger(points) || points < 1 || points > 100000) {
+    throw new Error("Points must be a positive integer no greater than 100000");
+  }
+  const db = getDb();
+  const result = db
+    .prepare(`UPDATE ledger SET points = ? WHERE id = ? AND type = 'earn'`)
+    .run(points, id);
+  return { ok: true, updated: result.changes > 0, newBalance: getBalance() };
+}
+
 // Discard a queued completion without awarding points. It stays in
 // processed_completions so it won't be re-added on the next sync.
 export function discardPendingReview(completionId: string): { ok: true } {

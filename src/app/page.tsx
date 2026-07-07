@@ -1,6 +1,6 @@
 import { getStats } from "@/lib/queries";
 import DashboardRefresh from "./DashboardRefresh";
-import RemoveEarningButton from "./RemoveEarningButton";
+import EarningControls from "./EarningControls";
 
 export const dynamic = "force-dynamic";
 
@@ -42,7 +42,7 @@ export default function DashboardPage() {
                 <span className="truncate text-sm text-slate-200">{e.description}</span>
                 <div className="flex shrink-0 items-center gap-3">
                   <span className="font-semibold text-emerald-400">+{e.points}</span>
-                  <RemoveEarningButton id={e.id} />
+                  <EarningControls id={e.id} points={e.points} />
                 </div>
               </li>
             ))}
