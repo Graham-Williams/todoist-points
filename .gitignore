@@ -27,6 +27,9 @@ data/
 # backup runtime state (checksums, last-push timestamp) on the host
 .backup-state/
 
+# agent-local feature context (never committed)
+.claude/
+
 # misc
 .DS_Store
 *.log
