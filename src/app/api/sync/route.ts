@@ -46,14 +46,49 @@ export async function POST() {
          (completion_id, content, labels, completed_at, created_at)
        VALUES (?, ?, ?, ?, datetime('now'))`
     );
+    // Manual point pre-assignment (see /review "Upcoming"). Keyed by the ACTIVE
+    // task id, which equals the completed item's `id` here (verified 2026-07-08).
+    const lookupOverride = db.prepare(
+      `SELECT points FROM task_point_overrides WHERE task_id = ?`
+    );
+    const deleteOverride = db.prepare(
+      `DELETE FROM task_point_overrides WHERE task_id = ?`
+    );
 
     let newlyProcessed = 0;
     let pointsAwarded = 0;
 
     const tx = db.transaction(() => {
       for (const task of completed) {
+        // Idempotency guard FIRST: a completion already processed is skipped
+        // entirely, so re-syncing a stale window can never re-award or re-fire
+        // (or re-delete) an override — even though the override row is gone by
+        // then, this ordering is what makes the whole loop safe.
         if (alreadyProcessed.get(task.id)) continue;
         const labels = task.labels ?? [];
+
+        // MANUAL OVERRIDE WINS. If the user pre-assigned a point value to this
+        // (formerly upcoming) task, award EXACTLY that value, bypass the label
+        // logic AND the pending_review queue (even for a no-label task), then
+        // delete the now-stale override row within this same transaction. The
+        // ledger source_id stays the completion id (unchanged dedup key), and
+        // markProcessed still runs below, so idempotency is preserved.
+        const override = lookupOverride.get(task.id) as
+          | { points: number }
+          | undefined;
+        if (override) {
+          insertLedger.run(
+            override.points,
+            task.id,
+            `${task.content} (pre-assigned)`
+          );
+          deleteOverride.run(task.id);
+          newlyProcessed += 1;
+          pointsAwarded += override.points;
+          markProcessed.run(task.id);
+          continue;
+        }
+
         // Multi-label task earns the MAX of its labels' point values
         // (single label = that value; no labels = 0).
         const earned = labels.reduce(
