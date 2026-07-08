@@ -36,3 +36,6 @@ data/
 npm-debug.log*
 .vercel
 coverage/
+
+# TypeScript incremental build info
+tsconfig.tsbuildinfo
