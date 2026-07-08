@@ -59,9 +59,12 @@ export function parseEarning(description: string | null): ParsedEarning {
       .map((s) => s.trim())
       .filter(Boolean);
     if (labels.length > 0) {
+      // Deliberately DO NOT surface the actual label names on a completed
+      // earning — just a single generic "label-derived" badge so it's clear
+      // the value came from the task's labels without exposing which ones.
       return {
         title: raw.slice(0, labelMatch.index),
-        badges: labels.map((text) => ({ kind: "label", text })),
+        badges: [{ kind: "label", text: "label-derived" }],
       };
     }
   }

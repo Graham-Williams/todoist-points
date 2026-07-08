@@ -16,19 +16,16 @@ test("pre-assigned suffix -> clean title + pre-assigned badge", () => {
   assert.deepEqual(r.badges, [{ kind: "pre-assigned", text: "pre-assigned" }]);
 });
 
-test("single label -> clean title + one label badge", () => {
+test("single label -> generic label-derived badge, name not surfaced", () => {
   const r = parseEarning("Do dishes [chores]");
   assert.equal(r.title, "Do dishes");
-  assert.deepEqual(r.badges, [{ kind: "label", text: "chores" }]);
+  assert.deepEqual(r.badges, [{ kind: "label", text: "label-derived" }]);
 });
 
-test("multiple labels -> one badge each, trimmed", () => {
+test("multiple labels -> still one generic badge, names not surfaced", () => {
   const r = parseEarning("Ship feature [work, urgent]");
   assert.equal(r.title, "Ship feature");
-  assert.deepEqual(r.badges, [
-    { kind: "label", text: "work" },
-    { kind: "label", text: "urgent" },
-  ]);
+  assert.deepEqual(r.badges, [{ kind: "label", text: "label-derived" }]);
 });
 
 test("no recognizable suffix -> title unchanged, no badges", () => {
@@ -46,7 +43,7 @@ test("null description is handled", () => {
 test("only the trailing bracket group is stripped; earlier brackets stay", () => {
   const r = parseEarning("Fix bug [v2] in parser [work]");
   assert.equal(r.title, "Fix bug [v2] in parser");
-  assert.deepEqual(r.badges, [{ kind: "label", text: "work" }]);
+  assert.deepEqual(r.badges, [{ kind: "label", text: "label-derived" }]);
 });
 
 test("empty bracket group is not treated as a label", () => {
