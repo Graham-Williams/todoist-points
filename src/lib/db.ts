@@ -57,6 +57,18 @@ function initSchema(db: Database.Database) {
       completed_at  TEXT,
       created_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- Manual point pre-assignments for UPCOMING (uncompleted, dated) tasks.
+    -- Keyed by the ACTIVE Todoist task id, which equals the completed item's
+    -- id on sync (verified 2026-07-08). When such a task is completed, sync
+    -- awards EXACTLY these points (manual override beats label-based points)
+    -- and deletes the row (it is stale once the task is done). See sync route.
+    CREATE TABLE IF NOT EXISTS task_point_overrides (
+      task_id    TEXT PRIMARY KEY,
+      points     INTEGER NOT NULL,
+      content    TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
   `);
 }
 
