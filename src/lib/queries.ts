@@ -1,4 +1,5 @@
 import { getDb } from "./db";
+import { parseEarning, type EarningBadge } from "./earningSource";
 
 export interface LedgerEntry {
   id: number;
@@ -22,11 +23,20 @@ export interface LabelPoint {
   points: number;
 }
 
+// A recent-earning row prepared for display: the raw ledger fields plus the
+// clean task title and source badges parsed off its description suffix.
+export interface RecentEarning {
+  id: number;
+  points: number;
+  title: string;
+  badges: EarningBadge[];
+}
+
 export interface DashboardStats {
   balance: number;
   totalEarned: number;
   totalSpent: number;
-  recentEarnings: LedgerEntry[];
+  recentEarnings: RecentEarning[];
   redemptions: LedgerEntry[];
 }
 
@@ -46,11 +56,16 @@ export function getStats(): DashboardStats {
       .prepare(`SELECT COALESCE(SUM(points), 0) AS s FROM ledger WHERE type = 'redeem'`)
       .get() as { s: number }).s ?? 0;
 
-  const recentEarnings = db
-    .prepare(
-      `SELECT * FROM ledger WHERE type = 'earn' AND points > 0 ORDER BY id DESC LIMIT 20`
-    )
-    .all() as LedgerEntry[];
+  const recentEarnings = (
+    db
+      .prepare(
+        `SELECT * FROM ledger WHERE type = 'earn' AND points > 0 ORDER BY id DESC LIMIT 20`
+      )
+      .all() as LedgerEntry[]
+  ).map((e): RecentEarning => {
+    const { title, badges } = parseEarning(e.description);
+    return { id: e.id, points: e.points, title, badges };
+  });
 
   const redemptions = db
     .prepare(
