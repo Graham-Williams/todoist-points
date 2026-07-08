@@ -3,6 +3,7 @@ import Link from "next/link";
 import "./globals.css";
 import AutoSync from "./AutoSync";
 import ReviewNavLink from "./ReviewNavLink";
+import SiteFooter from "./SiteFooter";
 
 export const metadata: Metadata = {
   title: "Todoist Points",
@@ -25,9 +26,12 @@ export default function RootLayout({
       <body className="min-h-screen">
         <header className="border-b border-slate-800 bg-slate-900/60">
           <nav className="mx-auto flex max-w-4xl items-center gap-6 px-6 py-4">
-            <span className="text-lg font-bold text-emerald-400">
+            <Link
+              href="/"
+              className="text-lg font-bold text-emerald-400 hover:text-emerald-300"
+            >
               Todoist Points
-            </span>
+            </Link>
             <div className="flex gap-4 text-sm">
               {navLinks.map((l) => (
                 <Link
@@ -56,6 +60,7 @@ export default function RootLayout({
           </nav>
         </header>
         <main className="mx-auto max-w-4xl px-6 py-8">{children}</main>
+        <SiteFooter />
       </body>
     </html>
   );
