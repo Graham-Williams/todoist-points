@@ -14,7 +14,7 @@ export async function GET() {
       content: t.content,
       labels: t.labels,
       due: t.due,
-      points: t.id in overrides ? overrides[t.id] : null,
+      points: Object.hasOwn(overrides, t.id) ? overrides[t.id] : null,
     }));
     return NextResponse.json({ tasks: merged });
   } catch (err) {
