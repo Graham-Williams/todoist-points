@@ -42,8 +42,16 @@ export default function RootLayout({
             </div>
             {/* Single global auto-sync loop; drives all pages via the
                 `todoist:synced` event it emits after each successful sync. */}
-            <div className="ml-auto">
+            <div className="ml-auto flex items-center gap-4">
               <AutoSync />
+              {process.env.APP_PASSWORD ? (
+                <a
+                  href="/logout"
+                  className="text-sm text-slate-400 hover:text-white"
+                >
+                  Sign out
+                </a>
+              ) : null}
             </div>
           </nav>
         </header>
