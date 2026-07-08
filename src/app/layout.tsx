@@ -14,6 +14,7 @@ const navLinks = [
   { href: "/", label: "Dashboard" },
   { href: "/labels", label: "Labels & Points" },
   { href: "/rewards", label: "Rewards" },
+  { href: "/about", label: "About" },
 ];
 
 export default function RootLayout({
