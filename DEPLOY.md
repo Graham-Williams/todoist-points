@@ -2,20 +2,31 @@
 
 Production runs in Docker on the home server, alongside km-tracker, and is
 reachable **only** through the existing Cloudflare Tunnel at
-**https://todoist-points.graham-williams.com**, gated by Cloudflare Access
-(one-time PIN). The app also verifies the Access JWT itself (see
-`src/middleware.ts`) — so even in-network traffic that bypasses the tunnel
-gets a 403 without a valid Access token.
+**https://todoist-points.graham-williams.com**.
+
+**Sign-in — app-level shared password (the active model).** The app gates
+itself in `src/middleware.ts`: set **`APP_PASSWORD`** (shared secret) +
+**`SESSION_SECRET`** (cookie-signing key) and every request without a valid
+signed session cookie is redirected to `/login`. One password → a ~30-day
+session, so re-auth is rare. This **replaces** the Cloudflare-Access emailed-PIN
+login. The legacy CF-Access JWT check is still in the code (env-gated on
+`CF_ACCESS_AUD`/`CF_ACCESS_TEAM_DOMAIN`) but is **skipped whenever
+`APP_PASSWORD` is set**, so the two never fight. With `APP_PASSWORD` empty the
+gate is OFF and the app behaves as before (e.g. while still fronted by CF
+Access). See the "Cutover" section below.
 
 ## Box layout
 
 - Server: Ubuntu home server, reached via Tailscale SSH: `ssh graham@100.101.1.28`
 - App dir: `~/todoist-points` (a clone of this repo)
 - Data: `~/todoist-points/data/todoist-points.db` (SQLite, bind-mounted into the container at `/data`)
-- Secrets: `~/todoist-points/.env` (gitignored; holds `TODOIST_API_TOKEN` and
-  `CF_ACCESS_AUD` — the latter is the Cloudflare Access application's Audience
-  (AUD) tag for `todoist-points.graham-williams.com`, copied from the
-  Cloudflare Zero Trust dashboard/API when the Access app is created)
+- Secrets: `~/todoist-points/.env` (gitignored, `chmod 600`). Holds:
+  - `TODOIST_API_TOKEN` — Todoist API token.
+  - `APP_PASSWORD` — shared sign-in password (set = gate ON).
+  - `SESSION_SECRET` — random key that signs the session cookie
+    (`openssl rand -hex 32`).
+  - `CF_ACCESS_AUD` — *legacy*, the Cloudflare Access app's Audience (AUD) tag;
+    only needed while still fronted by CF Access. Leave empty after cutover.
 
 ## First deploy
 
@@ -24,8 +35,9 @@ ssh graham@100.101.1.28
 git clone https://github.com/Graham-Williams/todoist-points.git ~/todoist-points
 cd ~/todoist-points
 cp .env.example .env && chmod 600 .env
-# then edit .env: set the real TODOIST_API_TOKEN and CF_ACCESS_AUD (the
-# Access app's AUD tag from the Cloudflare Zero Trust dashboard/API)
+# then edit .env: set TODOIST_API_TOKEN, and for the password gate set
+# APP_PASSWORD + SESSION_SECRET (openssl rand -hex 32). CF_ACCESS_AUD is only
+# needed if you're still fronting with Cloudflare Access.
 mkdir -p data               # create it yourself so it's owned by your user (uid 1000
                             # matches the container's non-root `node` user), not root
 # optional: copy an existing DB into ./data/todoist-points.db (a fresh one
@@ -34,14 +46,20 @@ docker compose up -d --build
 ```
 
 Sanity check from the box (no host ports, no extra images — run node inside
-the app container). An unauthenticated request must return **403**: the
-in-app middleware rejects anything without a valid Cloudflare Access JWT, so
-`403` means the app is up AND locked. A `200` here would mean the JWT
-verification isn't active (check `CF_ACCESS_AUD` / `CF_ACCESS_TEAM_DOMAIN`);
-no response means the app isn't up.
+the app container). Hit the dedicated **`/api/health`** endpoint, which is
+exempt from the auth gate and returns **200** when the app is up:
 
 ```bash
-docker compose exec todoist-points node -e "fetch('http://localhost:3000').then(r=>{console.log(r.status);process.exit(r.status===403?0:1)})"
+docker compose exec todoist-points node -e "fetch('http://localhost:3000/api/health').then(r=>{console.log(r.status);process.exit(r.status===200?0:1)})"
+```
+
+To confirm the **gate is actually locked**, hit `/` (a page) — with the
+password gate on it should **307-redirect to `/login`**; with the legacy CF
+gate on it returns **403**:
+
+```bash
+docker compose exec todoist-points node -e "fetch('http://localhost:3000/',{redirect:'manual'}).then(r=>console.log(r.status))"
+# 307 (password gate on) or 403 (CF gate on) = locked. 200 = OPEN, misconfigured.
 ```
 
 ## Redeploy (from main)
@@ -70,15 +88,38 @@ The DB and `.env` live outside the image (volume + env file), so rebuilds are sa
   the catch-all 404), and create a proxied CNAME to
   `<tunnel-id>.cfargotunnel.com`. See the personal-assistant CLAUDE.md
   (Cloudflare section) for token/IDs/procedure.
-- **Cloudflare Access** (one-time PIN) fronts the hostname. Nothing reaches
-  the app without passing Access.
-- **In-app JWT verification (defense in depth):** the compose file sets
-  `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` (from the box `.env`; it's the
-  Access app's AUD tag) and `APP_HOST`. With those set, `src/middleware.ts`
-  independently verifies the `Cf-Access-Jwt-Assertion` JWT on every request
-  and pins the Origin/Host of mutating requests to `APP_HOST`. Requests
-  without a valid Access JWT get a 403 — which is why 403 is the healthy
-  sanity-check result above.
+- **App-level password gate (active):** `src/middleware.ts` + `src/lib/auth.ts`.
+  When `APP_PASSWORD` is set, unauthenticated requests are redirected to
+  `/login`; a correct password sets a `SESSION_SECRET`-signed, HttpOnly/Secure/
+  SameSite=Lax cookie (~30-day). Failed logins are rate-limited (10/15 min per
+  client IP). The `APP_HOST` Origin/Host CSRF pin still runs first for every
+  mutating request (incl. the login POST).
+- **Legacy Cloudflare Access (one-time PIN) + in-app JWT verification:** kept in
+  code but **skipped when `APP_PASSWORD` is set**. While configured (CF gate on,
+  password gate off) the compose file's `CF_ACCESS_TEAM_DOMAIN` + `CF_ACCESS_AUD`
+  make `src/middleware.ts` verify the `Cf-Access-Jwt-Assertion` JWT on every
+  request; requests without a valid JWT get 403.
+
+## Cutover: Cloudflare Access → app password
+
+1. On the box, edit `~/todoist-points/.env`: set `APP_PASSWORD=<shared secret>`
+   and `SESSION_SECRET=$(openssl rand -hex 32)`; clear/remove `CF_ACCESS_AUD`.
+2. `docker compose up -d --build` and confirm the health + locked checks above
+   (`/api/health` → 200; `/` → 307 to `/login`).
+3. Browse to `https://todoist-points.graham-williams.com`, sign in once, verify
+   the session sticks.
+4. Remove the Cloudflare **Access application** for the hostname (so visitors no
+   longer get the one-time-PIN prompt). Leave the tunnel ingress + DNS as-is.
+
+To roll back: clear `APP_PASSWORD`, restore `CF_ACCESS_AUD`, re-create the
+Access app, redeploy.
+
+**Revoking sessions / rotating the password.** Session cookies are signed with
+`SESSION_SECRET` and are valid for ~30 days independent of `APP_PASSWORD`.
+Changing `APP_PASSWORD` alone does NOT log out existing sessions. To force
+everyone to re-authenticate (e.g. the password leaked, or someone should lose
+access), **rotate `SESSION_SECRET`** (`openssl rand -hex 32`) and redeploy —
+that invalidates every outstanding cookie immediately.
 
 ## Automated backups (off-box, issue #6)
 

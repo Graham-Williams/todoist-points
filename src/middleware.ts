@@ -1,16 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
+import { SESSION_COOKIE, safeNextPath, verifySessionToken } from "@/lib/auth";
 
-// Defense-in-depth behind Cloudflare Access (mirrors the km-tracker setup):
+// Authentication / defense-in-depth for the deployment. Two independent gates,
+// each env-activated, plus a CSRF/origin pin:
 //
-// 1. When CF_ACCESS_AUD + CF_ACCESS_TEAM_DOMAIN are BOTH set, every request
-//    must carry a valid Cloudflare Access JWT (header `Cf-Access-Jwt-Assertion`,
-//    falling back to the `CF_Authorization` cookie). The RS256 signature is
-//    verified against the team's JWKS, and aud/iss/exp/nbf are checked.
-//    Anything invalid or missing gets a 403 with no app data. So even if the
-//    tunnel/network layer is misconfigured, unauthenticated traffic can't
-//    reach the app.
-// 2. When APP_HOST is set, non-GET/HEAD requests must have a matching Origin
-//    (when present) and Host header — a CSRF/origin pin.
+// A. APP-LEVEL PASSWORD GATE (the active gate after the Cloudflare-Access
+//    cutover). When APP_PASSWORD is set, every request that isn't a public
+//    path (login/logout, health, Next static assets, icons) and doesn't carry
+//    a valid signed session cookie is redirected to /login (or 401 for /api/*).
+//    The session cookie is an HMAC-signed marker verified with SESSION_SECRET;
+//    an unsigned/forged cookie is rejected. Unset/empty APP_PASSWORD = gate OFF
+//    (the app behaves exactly as before — nothing is required).
+//
+// B. CLOUDFLARE ACCESS JWT (legacy; kept for the pre-cutover deployment). When
+//    CF_ACCESS_AUD + CF_ACCESS_TEAM_DOMAIN are BOTH set AND the password gate
+//    is OFF, every request must carry a valid Cloudflare Access JWT (header
+//    `Cf-Access-Jwt-Assertion`, falling back to the `CF_Authorization` cookie);
+//    the RS256 signature is verified against the team's JWKS and aud/iss/exp/nbf
+//    checked. Invalid/missing → 403. The password gate takes precedence: when
+//    APP_PASSWORD is set this block is skipped so the two never conflict.
+//
+// C. When APP_HOST is set, non-GET/HEAD requests must have a matching Origin
+//    (when present) and Host header — a CSRF/origin pin (also covers the login
+//    POST). Runs first, for every request.
 //
 // With none of these env vars set (local dev), the middleware is a no-op.
 //
@@ -117,8 +129,26 @@ async function verifyAccessJwt(
   }
 }
 
+// Paths reachable WITHOUT a session (when the password gate is active): the
+// auth endpoints themselves, the container healthcheck, and Next's build
+// assets / icon routes (needed to render the login page). Everything else is
+// gated.
+function isPublicPath(pathname: string): boolean {
+  if (pathname === "/login") return true;
+  if (pathname === "/logout") return true;
+  if (pathname === "/api/login") return true;
+  if (pathname === "/api/logout") return true;
+  if (pathname === "/api/health") return true; // healthcheck endpoint
+  if (pathname.startsWith("/_next/")) return true; // JS/CSS/HMR chunks
+  if (pathname === "/favicon.ico") return true;
+  if (pathname === "/icon.svg" || pathname === "/icon") return true;
+  if (pathname === "/apple-icon" || pathname.startsWith("/apple-icon/")) return true;
+  if (pathname === "/robots.txt" || pathname === "/sitemap.xml") return true;
+  return false;
+}
+
 export async function middleware(req: NextRequest) {
-  // CSRF/origin pin: mutating requests must come from our own host.
+  // (C) CSRF/origin pin: mutating requests must come from our own host.
   const appHost = process.env.APP_HOST;
   if (appHost && req.method !== "GET" && req.method !== "HEAD") {
     const origin = req.headers.get("origin");
@@ -134,7 +164,31 @@ export async function middleware(req: NextRequest) {
     if (req.headers.get("host") !== appHost) return forbidden();
   }
 
-  // Cloudflare Access JWT verification (only when fully configured).
+  // (A) App-level password gate — the active gate. When APP_PASSWORD is set,
+  // require a valid signed session cookie for everything but public paths.
+  const appPassword = process.env.APP_PASSWORD;
+  if (appPassword) {
+    const { pathname, search } = req.nextUrl;
+    if (isPublicPath(pathname)) return NextResponse.next();
+
+    const sessionSecret = process.env.SESSION_SECRET;
+    const token = req.cookies.get(SESSION_COOKIE)?.value;
+    const authed =
+      !!sessionSecret && (await verifySessionToken(sessionSecret, token));
+    if (authed) return NextResponse.next();
+
+    // Unauthenticated. For API calls, a 401 is friendlier to fetch() than a
+    // redirect to an HTML login page. For navigations, redirect to /login.
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const loginUrl = new URL("/login", req.url);
+    loginUrl.searchParams.set("next", safeNextPath(pathname + search));
+    return NextResponse.redirect(loginUrl);
+  }
+
+  // (B) Cloudflare Access JWT verification (legacy; only when the password
+  // gate is OFF and CF Access is fully configured).
   const accessAud = process.env.CF_ACCESS_AUD;
   const teamDomain = process.env.CF_ACCESS_TEAM_DOMAIN;
   if (accessAud && teamDomain) {
@@ -149,6 +203,6 @@ export async function middleware(req: NextRequest) {
   return NextResponse.next();
 }
 
-// No matcher: intentionally match EVERY path (pages, /api, static assets).
-// Nothing is exempt — an unauthenticated request answering 403 is the
-// expected health signal for the deployment (see DEPLOY.md).
+// No matcher: intentionally run on EVERY path (pages, /api, static assets), so
+// path exemptions are decided in code (isPublicPath) rather than a matcher —
+// keeping the gate fail-closed by default.

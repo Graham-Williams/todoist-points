@@ -16,13 +16,19 @@ services:
       DB_PATH: /data/todoist-points.db
       # Read from a box-local, gitignored .env next to this file.
       TODOIST_API_TOKEN: ${TODOIST_API_TOKEN:?TODOIST_API_TOKEN must be set}
-      # In-app Cloudflare Access JWT verification (defense in depth — the app
-      # itself rejects any request without a valid Access JWT). The AUD comes
-      # from the box-local .env: it's the Access application's Audience tag,
-      # copied from the Cloudflare Zero Trust dashboard/API once the Access
-      # app for todoist-points.graham-williams.com exists.
+      # App-level shared-password sign-in gate (src/middleware.ts). Set both to
+      # turn the gate ON (the post-Cloudflare-Access model): APP_PASSWORD is the
+      # shared secret typed at /login, SESSION_SECRET signs the session cookie.
+      # Leave BOTH empty to keep the gate OFF (e.g. while still behind CF Access).
+      APP_PASSWORD: ${APP_PASSWORD:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      # In-app Cloudflare Access JWT verification (LEGACY defense-in-depth). The
+      # AUD comes from the box-local .env; the team domain is fixed. When
+      # APP_PASSWORD is set the middleware skips this block (password gate wins),
+      # so at cutover just set APP_PASSWORD/SESSION_SECRET and clear CF_ACCESS_AUD.
+      # Optional (:-) so cutover doesn't require the CF var to be present.
       CF_ACCESS_TEAM_DOMAIN: blue-dream-0427.cloudflareaccess.com
-      CF_ACCESS_AUD: ${CF_ACCESS_AUD:?CF_ACCESS_AUD must be set}
+      CF_ACCESS_AUD: ${CF_ACCESS_AUD:-}
       # CSRF/origin pin: non-GET requests must carry a matching Origin/Host.
       APP_HOST: todoist-points.graham-williams.com
     volumes:
