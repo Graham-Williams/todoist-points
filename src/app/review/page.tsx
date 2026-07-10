@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import SortableList from "../SortableList";
 
 interface ReviewTask {
   completion_id: string;
@@ -108,6 +109,44 @@ export default function ReviewPage() {
     window.addEventListener("todoist:synced", onSynced);
     return () => window.removeEventListener("todoist:synced", onSynced);
   }, [load, loadUpcoming]);
+
+  // Persist a new drag order for the review queue: optimistic, reload-on-failure.
+  async function reorderReview(newItems: ReviewTask[]) {
+    setTasks(newItems);
+    try {
+      const res = await fetch("/api/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          list: "review",
+          order: newItems.map((t) => t.completion_id),
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to save order");
+    } catch (err) {
+      setError((err as Error).message);
+      load();
+    }
+  }
+
+  // Persist a new drag order for the upcoming list.
+  async function reorderUpcoming(newItems: UpcomingTask[]) {
+    setUpcoming(newItems);
+    try {
+      const res = await fetch("/api/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          list: "upcoming",
+          order: newItems.map((t) => t.id),
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to save order");
+    } catch (err) {
+      setUpcomingError((err as Error).message);
+      loadUpcoming();
+    }
+  }
 
   function setPointValue(id: string, value: string) {
     setPoints((prev) => ({ ...prev, [id]: value }));
@@ -234,12 +273,14 @@ export default function ReviewPage() {
         )}
 
         {tasks.length > 0 && (
-          <ul className="divide-y divide-slate-800 rounded-xl border border-slate-800">
-            {tasks.map((t) => (
-              <li
-                key={t.completion_id}
-                className="flex flex-wrap items-center justify-between gap-4 px-4 py-3"
-              >
+          <SortableList
+            items={tasks}
+            getKey={(t) => t.completion_id}
+            onReorder={reorderReview}
+            ulClassName="divide-y divide-slate-800 rounded-xl border border-slate-800"
+            liClassName="px-4 py-3"
+            renderItem={(t) => (
+              <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm text-slate-100">
                     {t.content}
@@ -288,9 +329,9 @@ export default function ReviewPage() {
                     Discard
                   </button>
                 </div>
-              </li>
-            ))}
-          </ul>
+              </div>
+            )}
+          />
         )}
       </div>
 
@@ -316,12 +357,14 @@ export default function ReviewPage() {
         )}
 
         {upcoming.length > 0 && (
-          <ul className="divide-y divide-slate-800 rounded-xl border border-slate-800">
-            {upcoming.map((t) => (
-              <li
-                key={t.id}
-                className="flex flex-wrap items-center justify-between gap-4 px-4 py-3"
-              >
+          <SortableList
+            items={upcoming}
+            getKey={(t) => t.id}
+            onReorder={reorderUpcoming}
+            ulClassName="divide-y divide-slate-800 rounded-xl border border-slate-800"
+            liClassName="px-4 py-3"
+            renderItem={(t) => (
+              <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm text-slate-100">
                     {t.content}
@@ -372,9 +415,9 @@ export default function ReviewPage() {
                     </button>
                   )}
                 </div>
-              </li>
-            ))}
-          </ul>
+              </div>
+            )}
+          />
         )}
       </div>
     </div>

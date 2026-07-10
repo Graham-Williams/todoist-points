@@ -69,6 +69,18 @@ function initSchema(db: Database.Database) {
       content    TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     );
+
+    -- Generic, per-list manual ordering. One row per (list, item) records the
+    -- user's dragged position for that item within a named list. Valid list
+    -- values: 'rewards', 'labels', 'review', 'upcoming' (see queries.ts). The
+    -- GET paths left-join these positions so a reload reflects the custom order;
+    -- items with no stored position keep their natural order and sort last.
+    CREATE TABLE IF NOT EXISTS list_order (
+      list      TEXT NOT NULL,
+      item_key  TEXT NOT NULL,
+      position  INTEGER NOT NULL,
+      PRIMARY KEY (list, item_key)
+    );
   `);
 }
 

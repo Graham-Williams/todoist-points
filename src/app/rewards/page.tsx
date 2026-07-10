@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import SortableList from "../SortableList";
 
 interface Reward {
   id: number;
@@ -95,6 +96,26 @@ export default function RewardsPage() {
     setEditCost("");
   }
 
+  // Persist a new drag order: optimistic local update, then POST. On failure,
+  // reload the list from the server and surface the error.
+  async function reorder(newItems: Reward[]) {
+    setRewards(newItems);
+    try {
+      const res = await fetch("/api/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          list: "rewards",
+          order: newItems.map((r) => String(r.id)),
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to save order");
+    } catch (err) {
+      setStatus((err as Error).message);
+      load();
+    }
+  }
+
   async function saveCost(id: number) {
     const n = parseInt(editCost, 10);
     if (!Number.isInteger(n) || n < 1) {
@@ -165,81 +186,88 @@ export default function RewardsPage() {
         {status && <span className="text-sm text-slate-400">{status}</span>}
       </form>
 
-      <ul className="divide-y divide-slate-800 rounded-xl border border-slate-800">
-        {rewards.length === 0 && (
+      {rewards.length === 0 ? (
+        <ul className="divide-y divide-slate-800 rounded-xl border border-slate-800">
           <li className="px-4 py-3 text-sm text-slate-500">No rewards yet.</li>
-        )}
-        {rewards.map((r) => (
-          <li
-            key={r.id}
-            className={`flex items-center justify-between gap-4 px-4 py-3 ${
-              r.active ? "" : "opacity-50"
-            }`}
-          >
-            <div className="min-w-0">
-              <div className="truncate text-sm text-slate-100">{r.name}</div>
-              {editingId === r.id ? (
-                <div className="mt-1 flex items-center gap-2">
-                  <input
-                    type="number"
-                    min={1}
-                    value={editCost}
-                    onChange={(e) => setEditCost(e.target.value)}
-                    disabled={editBusy}
-                    className="w-24 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-right text-xs text-white focus:border-emerald-500 focus:outline-none disabled:opacity-50"
-                  />
-                  <span className="text-xs text-slate-400">pts</span>
-                  <button
-                    onClick={() => saveCost(r.id)}
-                    disabled={editBusy}
-                    className="rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-40"
-                  >
-                    {editBusy ? "Saving…" : "Save"}
-                  </button>
-                  <button
-                    onClick={cancelEdit}
-                    disabled={editBusy}
-                    className="rounded-md border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              ) : (
-                <div className="mt-0.5 flex items-center gap-2">
-                  <span className="text-xs text-slate-400">{r.cost} pts</span>
-                  <button
-                    onClick={() => startEdit(r)}
-                    className="text-xs text-slate-500 hover:text-slate-300"
-                  >
-                    Edit
-                  </button>
-                </div>
-              )}
+        </ul>
+      ) : (
+        <SortableList
+          items={rewards}
+          getKey={(r) => String(r.id)}
+          onReorder={reorder}
+          ulClassName="divide-y divide-slate-800 rounded-xl border border-slate-800"
+          liClassName="px-4 py-3"
+          renderItem={(r) => (
+            <div
+              className={`flex items-center justify-between gap-4 ${
+                r.active ? "" : "opacity-50"
+              }`}
+            >
+              <div className="min-w-0">
+                <div className="truncate text-sm text-slate-100">{r.name}</div>
+                {editingId === r.id ? (
+                  <div className="mt-1 flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      value={editCost}
+                      onChange={(e) => setEditCost(e.target.value)}
+                      disabled={editBusy}
+                      className="w-24 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-right text-xs text-white focus:border-emerald-500 focus:outline-none disabled:opacity-50"
+                    />
+                    <span className="text-xs text-slate-400">pts</span>
+                    <button
+                      onClick={() => saveCost(r.id)}
+                      disabled={editBusy}
+                      className="rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-40"
+                    >
+                      {editBusy ? "Saving…" : "Save"}
+                    </button>
+                    <button
+                      onClick={cancelEdit}
+                      disabled={editBusy}
+                      className="rounded-md border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mt-0.5 flex items-center gap-2">
+                    <span className="text-xs text-slate-400">{r.cost} pts</span>
+                    <button
+                      onClick={() => startEdit(r)}
+                      className="text-xs text-slate-500 hover:text-slate-300"
+                    >
+                      Edit
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  onClick={() => redeem(r.id)}
+                  disabled={!r.active || balance < r.cost}
+                  className="rounded-md bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-40"
+                >
+                  Redeem
+                </button>
+                <button
+                  onClick={() => toggleActive(r)}
+                  className="rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
+                >
+                  {r.active ? "Deactivate" : "Activate"}
+                </button>
+                <button
+                  onClick={() => remove(r.id)}
+                  className="rounded-md border border-rose-900 px-3 py-1.5 text-xs text-rose-400 hover:bg-rose-950"
+                >
+                  Delete
+                </button>
+              </div>
             </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <button
-                onClick={() => redeem(r.id)}
-                disabled={!r.active || balance < r.cost}
-                className="rounded-md bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-40"
-              >
-                Redeem
-              </button>
-              <button
-                onClick={() => toggleActive(r)}
-                className="rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
-              >
-                {r.active ? "Deactivate" : "Activate"}
-              </button>
-              <button
-                onClick={() => remove(r.id)}
-                className="rounded-md border border-rose-900 px-3 py-1.5 text-xs text-rose-400 hover:bg-rose-950"
-              >
-                Delete
-              </button>
-            </div>
-          </li>
-        ))}
-      </ul>
+          )}
+        />
+      )}
     </div>
   );
 }
