@@ -13,10 +13,13 @@ const navLinks = [
   { href: "/about", label: "About" },
 ];
 
-// Top navigation. Desktop (md+) shows the inline links row exactly as before;
-// on phones the links collapse behind a ☰ hamburger that toggles a dropdown
-// panel. CRITICAL: <AutoSync/> stays mounted at all times in the right cluster
-// (it drives the global 15s sync loop) — the hamburger only toggles the links.
+// Top navigation. On wide screens (lg+) the full inline links row shows; below
+// lg the links, sync status, and Sign out collapse behind a ☰ hamburger so the
+// bar never gets cramped enough to wrap mid-phrase (the old md breakpoint left
+// an ugly ~768–1024px zone where everything squeezed and wrapped). Every item is
+// whitespace-nowrap + shrink-0 so nothing ever breaks across lines. CRITICAL:
+// <AutoSync/> stays mounted at all times in the right cluster (it drives the
+// global 15s sync loop) — the hamburger only toggles the links.
 export default function NavBar({ showSignOut }: { showSignOut: boolean }) {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
@@ -28,21 +31,21 @@ export default function NavBar({ showSignOut }: { showSignOut: boolean }) {
 
   return (
     <header className="border-b border-slate-800 bg-slate-900/60">
-      <nav className="mx-auto flex max-w-4xl items-center gap-6 px-6 py-4">
+      <nav className="mx-auto flex max-w-5xl items-center gap-8 px-6 py-4">
         <Link
           href="/"
-          className="text-lg font-bold text-emerald-400 hover:text-emerald-300"
+          className="shrink-0 whitespace-nowrap text-lg font-bold tracking-tight text-emerald-400 hover:text-emerald-300"
         >
           Todoist Points
         </Link>
 
-        {/* Desktop inline links (md and up). */}
-        <div className="hidden gap-4 text-sm md:flex">
+        {/* Desktop inline links (lg and up). */}
+        <div className="hidden items-center gap-5 text-sm lg:flex">
           {navLinks.map((l) => (
             <Link
               key={l.href}
               href={l.href}
-              className="text-slate-300 hover:text-white"
+              className="whitespace-nowrap text-slate-300 hover:text-white"
             >
               {l.label}
             </Link>
@@ -51,23 +54,23 @@ export default function NavBar({ showSignOut }: { showSignOut: boolean }) {
         </div>
 
         {/* Right cluster — always rendered. AutoSync must never unmount. */}
-        <div className="ml-auto flex items-center gap-4">
+        <div className="ml-auto flex shrink-0 items-center gap-4">
           <AutoSync />
           {showSignOut ? (
             <a
               href="/logout"
-              className="hidden text-sm text-slate-400 hover:text-white md:inline"
+              className="hidden whitespace-nowrap text-sm text-slate-400 hover:text-white lg:inline"
             >
               Sign out
             </a>
           ) : null}
-          {/* Hamburger (mobile only). */}
+          {/* Hamburger (below lg). */}
           <button
             type="button"
             aria-label="Toggle menu"
             aria-expanded={open}
             onClick={() => setOpen((v) => !v)}
-            className="rounded-md px-2 py-1 text-xl text-slate-300 hover:text-white md:hidden"
+            className="rounded-md px-2 py-1 text-xl leading-none text-slate-300 hover:text-white lg:hidden"
           >
             ☰
           </button>
@@ -76,8 +79,8 @@ export default function NavBar({ showSignOut }: { showSignOut: boolean }) {
 
       {/* Mobile dropdown panel (below the header). Toggles only the links. */}
       {open && (
-        <div className="border-t border-slate-800 md:hidden">
-          <div className="mx-auto flex max-w-4xl flex-col px-6 py-2 text-sm">
+        <div className="border-t border-slate-800 lg:hidden">
+          <div className="mx-auto flex max-w-5xl flex-col px-6 py-2 text-sm">
             {navLinks.map((l) => (
               <Link
                 key={l.href}

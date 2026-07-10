@@ -76,16 +76,17 @@ export default function AutoSync() {
   let status: string;
   if (busy) status = "Syncing…";
   else if (error) status = error;
-  else if (lastSynced) status = `Last synced: ${relativeTime(lastSynced, now)}`;
+  else if (lastSynced) status = `Synced ${relativeTime(lastSynced, now)}`;
   else status = "Not synced yet";
 
   return (
-    <div className="flex items-center gap-3">
-      {/* Hide the "Last synced…" status text on phones (only the Sync button
-          shows on small screens); visible from `sm` up. */}
+    <div className="flex shrink-0 items-center gap-3">
+      {/* The status text only shows on wide screens (lg+); below that the nav
+          collapses to a hamburger and just the Sync button remains. nowrap so
+          "Synced just now" never breaks across lines. */}
       <span
-        className={`hidden text-sm sm:inline ${
-          error ? "text-rose-400" : "text-slate-400"
+        className={`hidden whitespace-nowrap text-sm lg:inline ${
+          error ? "text-rose-400" : "text-slate-500"
         }`}
       >
         {status}
@@ -93,7 +94,7 @@ export default function AutoSync() {
       <button
         onClick={() => void sync()}
         disabled={busy}
-        className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+        className="shrink-0 whitespace-nowrap rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
       >
         {busy ? "Syncing…" : "Sync now"}
       </button>
