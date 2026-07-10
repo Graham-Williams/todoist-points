@@ -152,6 +152,18 @@ export function setOrder(list: string, keys: string[]): { ok: true } {
   if (keys.length > 5000) {
     throw new Error("Too many keys");
   }
+  // De-duplicate on the String()-coerced key, preserving first occurrence, so a
+  // repeated item_key can't violate PRIMARY KEY (list, item_key) and 500 the
+  // request. Positions stay 0..n-1 over the de-duped list.
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const k of keys) {
+    const key = String(k);
+    if (!seen.has(key)) {
+      seen.add(key);
+      deduped.push(key);
+    }
+  }
   const db = getDb();
   const del = db.prepare(`DELETE FROM list_order WHERE list = ?`);
   const ins = db.prepare(
@@ -159,9 +171,9 @@ export function setOrder(list: string, keys: string[]): { ok: true } {
   );
   const tx = db.transaction((ks: string[]) => {
     del.run(list);
-    ks.forEach((k, i) => ins.run(list, String(k), i));
+    ks.forEach((k, i) => ins.run(list, k, i));
   });
-  tx(keys);
+  tx(deduped);
   return { ok: true };
 }
 

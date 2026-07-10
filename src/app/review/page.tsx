@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import SortableList from "../SortableList";
 
 interface ReviewTask {
@@ -59,6 +59,12 @@ export default function ReviewPage() {
   const [upcomingLoading, setUpcomingLoading] = useState(true);
   const [upcomingError, setUpcomingError] = useState<string | null>(null);
 
+  // Per-list "reorder in flight" guards (review and upcoming are independent):
+  // while true, the sync-driven refetch skips that list so an in-flight sync
+  // can't snap it back to the old order before the reorder POST persists.
+  const reorderingReview = useRef(false);
+  const reorderingUpcoming = useRef(false);
+
   const load = useCallback(async () => {
     try {
       const res = await fetch("/api/review");
@@ -101,10 +107,12 @@ export default function ReviewPage() {
   useEffect(() => {
     load();
     loadUpcoming();
-    // Refetch both lists when the global AutoSync reports new data.
+    // Refetch both lists when the global AutoSync reports new data — but skip a
+    // list that's mid-reorder so the sync can't clobber its optimistic order
+    // before the reorder POST persists.
     const onSynced = () => {
-      load();
-      loadUpcoming();
+      if (!reorderingReview.current) load();
+      if (!reorderingUpcoming.current) loadUpcoming();
     };
     window.addEventListener("todoist:synced", onSynced);
     return () => window.removeEventListener("todoist:synced", onSynced);
@@ -112,6 +120,7 @@ export default function ReviewPage() {
 
   // Persist a new drag order for the review queue: optimistic, reload-on-failure.
   async function reorderReview(newItems: ReviewTask[]) {
+    reorderingReview.current = true;
     setTasks(newItems);
     try {
       const res = await fetch("/api/reorder", {
@@ -126,11 +135,14 @@ export default function ReviewPage() {
     } catch (err) {
       setError((err as Error).message);
       load();
+    } finally {
+      reorderingReview.current = false;
     }
   }
 
   // Persist a new drag order for the upcoming list.
   async function reorderUpcoming(newItems: UpcomingTask[]) {
+    reorderingUpcoming.current = true;
     setUpcoming(newItems);
     try {
       const res = await fetch("/api/reorder", {
@@ -145,6 +157,8 @@ export default function ReviewPage() {
     } catch (err) {
       setUpcomingError((err as Error).message);
       loadUpcoming();
+    } finally {
+      reorderingUpcoming.current = false;
     }
   }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import SortableList from "../SortableList";
 
 interface Reward {
@@ -21,6 +21,9 @@ export default function RewardsPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editCost, setEditCost] = useState("");
   const [editBusy, setEditBusy] = useState(false);
+  // True while a reorder is optimistically applied but not yet persisted — the
+  // sync-driven refetch skips this list so it can't snap back the old order.
+  const reordering = useRef(false);
 
   const load = useCallback(async () => {
     const [rRes, dRes] = await Promise.all([
@@ -35,8 +38,11 @@ export default function RewardsPage() {
 
   useEffect(() => {
     load();
-    // Refetch when the global AutoSync reports new data.
-    const onSynced = () => load();
+    // Refetch when the global AutoSync reports new data — but not mid-reorder,
+    // or an in-flight sync could clobber the optimistic order before it persists.
+    const onSynced = () => {
+      if (!reordering.current) load();
+    };
     window.addEventListener("todoist:synced", onSynced);
     return () => window.removeEventListener("todoist:synced", onSynced);
   }, [load]);
@@ -99,6 +105,7 @@ export default function RewardsPage() {
   // Persist a new drag order: optimistic local update, then POST. On failure,
   // reload the list from the server and surface the error.
   async function reorder(newItems: Reward[]) {
+    reordering.current = true;
     setRewards(newItems);
     try {
       const res = await fetch("/api/reorder", {
@@ -113,6 +120,8 @@ export default function RewardsPage() {
     } catch (err) {
       setStatus((err as Error).message);
       load();
+    } finally {
+      reordering.current = false;
     }
   }
 

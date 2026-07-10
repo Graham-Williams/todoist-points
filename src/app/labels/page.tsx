@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import SortableList from "../SortableList";
 
 interface LabelRow {
@@ -15,6 +15,10 @@ export default function LabelsPage() {
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // True while a reorder is optimistically applied but not yet persisted — the
+  // sync-driven refetch skips this list so it can't snap back the old order (and,
+  // importantly for this page, can't wipe in-progress point-input edits).
+  const reordering = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -32,8 +36,10 @@ export default function LabelsPage() {
 
   useEffect(() => {
     load();
-    // Refetch when the global AutoSync reports new data.
-    const onSynced = () => load();
+    // Refetch when the global AutoSync reports new data — but not mid-reorder.
+    const onSynced = () => {
+      if (!reordering.current) load();
+    };
     window.addEventListener("todoist:synced", onSynced);
     return () => window.removeEventListener("todoist:synced", onSynced);
   }, [load]);
@@ -48,6 +54,7 @@ export default function LabelsPage() {
   // Persist a new drag order (independent of the batch "Save points" button —
   // reorder saves immediately on drop). Optimistic, with reload-on-failure.
   async function reorder(newItems: LabelRow[]) {
+    reordering.current = true;
     setLabels(newItems);
     try {
       const res = await fetch("/api/reorder", {
@@ -59,9 +66,14 @@ export default function LabelsPage() {
         }),
       });
       if (!res.ok) throw new Error("Failed to save order");
+      // Success: keep the optimistic state as-is. Do NOT reload — the rows hold
+      // unsaved point-input values that a reload would wipe. The new order is
+      // already correct and persisted.
     } catch (err) {
       setError((err as Error).message);
       load();
+    } finally {
+      reordering.current = false;
     }
   }
 
