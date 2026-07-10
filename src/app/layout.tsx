@@ -1,21 +1,12 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import "./globals.css";
-import AutoSync from "./AutoSync";
-import ReviewNavLink from "./ReviewNavLink";
+import NavBar from "./NavBar";
 import SiteFooter from "./SiteFooter";
 
 export const metadata: Metadata = {
   title: "Todoist Points",
   description: "A personal gamification layer for Todoist",
 };
-
-const navLinks = [
-  { href: "/", label: "Dashboard" },
-  { href: "/labels", label: "Labels & Points" },
-  { href: "/rewards", label: "Rewards" },
-  { href: "/about", label: "About" },
-];
 
 export default function RootLayout({
   children,
@@ -25,41 +16,11 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="min-h-screen">
-        <header className="border-b border-slate-800 bg-slate-900/60">
-          <nav className="mx-auto flex max-w-4xl items-center gap-6 px-6 py-4">
-            <Link
-              href="/"
-              className="text-lg font-bold text-emerald-400 hover:text-emerald-300"
-            >
-              Todoist Points
-            </Link>
-            <div className="flex gap-4 text-sm">
-              {navLinks.map((l) => (
-                <Link
-                  key={l.href}
-                  href={l.href}
-                  className="text-slate-300 hover:text-white"
-                >
-                  {l.label}
-                </Link>
-              ))}
-              <ReviewNavLink />
-            </div>
-            {/* Single global auto-sync loop; drives all pages via the
-                `todoist:synced` event it emits after each successful sync. */}
-            <div className="ml-auto flex items-center gap-4">
-              <AutoSync />
-              {process.env.APP_PASSWORD ? (
-                <a
-                  href="/logout"
-                  className="text-sm text-slate-400 hover:text-white"
-                >
-                  Sign out
-                </a>
-              ) : null}
-            </div>
-          </nav>
-        </header>
+        {/* NavBar is a client component so it can toggle the mobile menu; the
+            server-only APP_PASSWORD check is passed down as a boolean prop. The
+            single global auto-sync loop lives inside NavBar (AutoSync stays
+            mounted) and drives all pages via the `todoist:synced` event. */}
+        <NavBar showSignOut={!!process.env.APP_PASSWORD} />
         <main className="mx-auto max-w-4xl px-6 py-8">{children}</main>
         <SiteFooter />
       </body>
