@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import SortableList from "../SortableList";
 
 interface ReviewTask {
   completion_id: string;
@@ -58,6 +59,12 @@ export default function ReviewPage() {
   const [upcomingLoading, setUpcomingLoading] = useState(true);
   const [upcomingError, setUpcomingError] = useState<string | null>(null);
 
+  // Per-list "reorder in flight" guards (review and upcoming are independent):
+  // while true, the sync-driven refetch skips that list so an in-flight sync
+  // can't snap it back to the old order before the reorder POST persists.
+  const reorderingReview = useRef(false);
+  const reorderingUpcoming = useRef(false);
+
   const load = useCallback(async () => {
     try {
       const res = await fetch("/api/review");
@@ -100,14 +107,60 @@ export default function ReviewPage() {
   useEffect(() => {
     load();
     loadUpcoming();
-    // Refetch both lists when the global AutoSync reports new data.
+    // Refetch both lists when the global AutoSync reports new data — but skip a
+    // list that's mid-reorder so the sync can't clobber its optimistic order
+    // before the reorder POST persists.
     const onSynced = () => {
-      load();
-      loadUpcoming();
+      if (!reorderingReview.current) load();
+      if (!reorderingUpcoming.current) loadUpcoming();
     };
     window.addEventListener("todoist:synced", onSynced);
     return () => window.removeEventListener("todoist:synced", onSynced);
   }, [load, loadUpcoming]);
+
+  // Persist a new drag order for the review queue: optimistic, reload-on-failure.
+  async function reorderReview(newItems: ReviewTask[]) {
+    reorderingReview.current = true;
+    setTasks(newItems);
+    try {
+      const res = await fetch("/api/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          list: "review",
+          order: newItems.map((t) => t.completion_id),
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to save order");
+    } catch (err) {
+      setError((err as Error).message);
+      load();
+    } finally {
+      reorderingReview.current = false;
+    }
+  }
+
+  // Persist a new drag order for the upcoming list.
+  async function reorderUpcoming(newItems: UpcomingTask[]) {
+    reorderingUpcoming.current = true;
+    setUpcoming(newItems);
+    try {
+      const res = await fetch("/api/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          list: "upcoming",
+          order: newItems.map((t) => t.id),
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to save order");
+    } catch (err) {
+      setUpcomingError((err as Error).message);
+      loadUpcoming();
+    } finally {
+      reorderingUpcoming.current = false;
+    }
+  }
 
   function setPointValue(id: string, value: string) {
     setPoints((prev) => ({ ...prev, [id]: value }));
@@ -234,12 +287,14 @@ export default function ReviewPage() {
         )}
 
         {tasks.length > 0 && (
-          <ul className="divide-y divide-slate-800 rounded-xl border border-slate-800">
-            {tasks.map((t) => (
-              <li
-                key={t.completion_id}
-                className="flex flex-wrap items-center justify-between gap-4 px-4 py-3"
-              >
+          <SortableList
+            items={tasks}
+            getKey={(t) => t.completion_id}
+            onReorder={reorderReview}
+            ulClassName="divide-y divide-slate-800 rounded-xl border border-slate-800"
+            liClassName="px-4 py-3"
+            renderItem={(t) => (
+              <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm text-slate-100">
                     {t.content}
@@ -288,9 +343,9 @@ export default function ReviewPage() {
                     Discard
                   </button>
                 </div>
-              </li>
-            ))}
-          </ul>
+              </div>
+            )}
+          />
         )}
       </div>
 
@@ -316,12 +371,14 @@ export default function ReviewPage() {
         )}
 
         {upcoming.length > 0 && (
-          <ul className="divide-y divide-slate-800 rounded-xl border border-slate-800">
-            {upcoming.map((t) => (
-              <li
-                key={t.id}
-                className="flex flex-wrap items-center justify-between gap-4 px-4 py-3"
-              >
+          <SortableList
+            items={upcoming}
+            getKey={(t) => t.id}
+            onReorder={reorderUpcoming}
+            ulClassName="divide-y divide-slate-800 rounded-xl border border-slate-800"
+            liClassName="px-4 py-3"
+            renderItem={(t) => (
+              <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm text-slate-100">
                     {t.content}
@@ -372,9 +429,9 @@ export default function ReviewPage() {
                     </button>
                   )}
                 </div>
-              </li>
-            ))}
-          </ul>
+              </div>
+            )}
+          />
         )}
       </div>
     </div>

@@ -81,7 +81,13 @@ export default function AutoSync() {
 
   return (
     <div className="flex items-center gap-3">
-      <span className={`text-sm ${error ? "text-rose-400" : "text-slate-400"}`}>
+      {/* Hide the "Last synced…" status text on phones (only the Sync button
+          shows on small screens); visible from `sm` up. */}
+      <span
+        className={`hidden text-sm sm:inline ${
+          error ? "text-rose-400" : "text-slate-400"
+        }`}
+      >
         {status}
       </span>
       <button

@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import SortableList from "../SortableList";
 
 interface LabelRow {
   name: string;
@@ -14,6 +15,10 @@ export default function LabelsPage() {
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // True while a reorder is optimistically applied but not yet persisted — the
+  // sync-driven refetch skips this list so it can't snap back the old order (and,
+  // importantly for this page, can't wipe in-progress point-input edits).
+  const reordering = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -31,8 +36,10 @@ export default function LabelsPage() {
 
   useEffect(() => {
     load();
-    // Refetch when the global AutoSync reports new data.
-    const onSynced = () => load();
+    // Refetch when the global AutoSync reports new data — but not mid-reorder.
+    const onSynced = () => {
+      if (!reordering.current) load();
+    };
     window.addEventListener("todoist:synced", onSynced);
     return () => window.removeEventListener("todoist:synced", onSynced);
   }, [load]);
@@ -42,6 +49,32 @@ export default function LabelsPage() {
     setLabels((prev) =>
       prev.map((l) => (l.name === name ? { ...l, points: Number.isNaN(n) ? 0 : n } : l))
     );
+  }
+
+  // Persist a new drag order (independent of the batch "Save points" button —
+  // reorder saves immediately on drop). Optimistic, with reload-on-failure.
+  async function reorder(newItems: LabelRow[]) {
+    reordering.current = true;
+    setLabels(newItems);
+    try {
+      const res = await fetch("/api/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          list: "labels",
+          order: newItems.map((l) => l.name),
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to save order");
+      // Success: keep the optimistic state as-is. Do NOT reload — the rows hold
+      // unsaved point-input values that a reload would wipe. The new order is
+      // already correct and persisted.
+    } catch (err) {
+      setError((err as Error).message);
+      load();
+    } finally {
+      reordering.current = false;
+    }
   }
 
   async function save() {
@@ -89,13 +122,21 @@ export default function LabelsPage() {
       {loading && <p className="text-slate-500">Loading labels…</p>}
       {error && <p className="text-rose-400">{error}</p>}
 
-      {!loading && !error && (
+      {!loading && !error && labels.length === 0 && (
         <ul className="divide-y divide-slate-800 rounded-xl border border-slate-800">
-          {labels.length === 0 && (
-            <li className="px-4 py-3 text-sm text-slate-500">No labels found.</li>
-          )}
-          {labels.map((l) => (
-            <li key={l.name} className="flex items-center justify-between gap-4 px-4 py-3">
+          <li className="px-4 py-3 text-sm text-slate-500">No labels found.</li>
+        </ul>
+      )}
+
+      {!loading && !error && labels.length > 0 && (
+        <SortableList
+          items={labels}
+          getKey={(l) => l.name}
+          onReorder={reorder}
+          ulClassName="divide-y divide-slate-800 rounded-xl border border-slate-800"
+          liClassName="px-4 py-3"
+          renderItem={(l) => (
+            <div className="flex items-center justify-between gap-4">
               <span className="text-sm text-slate-200">{l.name}</span>
               <input
                 type="number"
@@ -103,9 +144,9 @@ export default function LabelsPage() {
                 onChange={(e) => setPoints(l.name, e.target.value)}
                 className="w-24 rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-right text-sm text-white focus:border-emerald-500 focus:outline-none"
               />
-            </li>
-          ))}
-        </ul>
+            </div>
+          )}
+        />
       )}
     </div>
   );

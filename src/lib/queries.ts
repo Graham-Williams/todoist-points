@@ -1,5 +1,11 @@
 import { getDb } from "./db";
 import { parseEarning, type EarningBadge } from "./earningSource";
+import { applyOrder } from "./order";
+
+// Re-exported so callers can keep importing it from "@/lib/queries". The
+// implementation lives in ./order (dependency-free) so it is unit-testable
+// without triggering the native better-sqlite3 import. See order.test.ts.
+export { applyOrder };
 
 export interface LedgerEntry {
   id: number;
@@ -102,9 +108,73 @@ export function getLabelPointsMap(): Record<string, number> {
 
 export function getRewards(): Reward[] {
   const db = getDb();
-  return db
-    .prepare(`SELECT * FROM rewards ORDER BY active DESC, id DESC`)
+  // Natural order is stable creation order; manual drag order (if any) then
+  // governs via applyOrder. Deactivated rewards keep their opacity styling but
+  // are no longer force-sorted to the bottom — that's intended.
+  const rows = db
+    .prepare(`SELECT * FROM rewards ORDER BY id ASC`)
     .all() as Reward[];
+  return applyOrder(rows, (r) => String(r.id), getOrderMap("rewards"));
+}
+
+// ---------------------------------------------------------------------------
+// Per-list manual ordering (generic, one `list_order` table for every list)
+// ---------------------------------------------------------------------------
+// Lists that can be manually reordered. Any other value is rejected by
+// setOrder so a bad/typo'd list name can never write orphan rows.
+export const ORDER_LISTS = new Set([
+  "rewards",
+  "labels",
+  "review",
+  "upcoming",
+]);
+
+// item_key -> position for a given list (used to left-join a list's rows so a
+// reload reflects the user's dragged order).
+export function getOrderMap(list: string): Record<string, number> {
+  const db = getDb();
+  const rows = db
+    .prepare(`SELECT item_key, position FROM list_order WHERE list = ?`)
+    .all(list) as { item_key: string; position: number }[];
+  const map: Record<string, number> = {};
+  for (const r of rows) map[r.item_key] = r.position;
+  return map;
+}
+
+// Persist a full ordering for a list: replace all of its rows with the given
+// keys at positions 0..n-1, in a single transaction. Keys are coerced with
+// String(); the list name is validated against ORDER_LISTS and an absurd
+// length is rejected as a cheap DoS guard.
+export function setOrder(list: string, keys: string[]): { ok: true } {
+  if (!ORDER_LISTS.has(list)) {
+    throw new Error(`Unknown list: ${list}`);
+  }
+  if (keys.length > 5000) {
+    throw new Error("Too many keys");
+  }
+  // De-duplicate on the String()-coerced key, preserving first occurrence, so a
+  // repeated item_key can't violate PRIMARY KEY (list, item_key) and 500 the
+  // request. Positions stay 0..n-1 over the de-duped list.
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const k of keys) {
+    const key = String(k);
+    if (!seen.has(key)) {
+      seen.add(key);
+      deduped.push(key);
+    }
+  }
+  const db = getDb();
+  const del = db.prepare(`DELETE FROM list_order WHERE list = ?`);
+  const ins = db.prepare(
+    `INSERT INTO list_order (list, item_key, position) VALUES (?, ?, ?)`
+  );
+  const tx = db.transaction((ks: string[]) => {
+    del.run(list);
+    ks.forEach((k, i) => ins.run(list, k, i));
+  });
+  tx(deduped);
+  return { ok: true };
 }
 
 export interface PendingReviewRow {
@@ -142,12 +212,13 @@ export function getPendingReview(): PendingReviewRow[] {
        ORDER BY completed_at DESC, created_at DESC`
     )
     .all() as PendingReviewDbRow[];
-  return rows.map((r) => ({
+  const mapped = rows.map((r) => ({
     completion_id: r.completion_id,
     content: r.content,
     labels: parseLabels(r.labels),
     completed_at: r.completed_at,
   }));
+  return applyOrder(mapped, (r) => r.completion_id, getOrderMap("review"));
 }
 
 export function getPendingReviewCount(): number {

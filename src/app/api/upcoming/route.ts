@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getActiveDatedTasks } from "@/lib/todoist";
-import { getTaskOverridesMap } from "@/lib/queries";
+import { getTaskOverridesMap, applyOrder, getOrderMap } from "@/lib/queries";
 
 // GET: list uncompleted Todoist tasks that have a due date, left-joined with any
 // saved manual point override. Response: { tasks: [{ id, content, labels, due,
@@ -16,7 +16,8 @@ export async function GET() {
       due: t.due,
       points: Object.hasOwn(overrides, t.id) ? overrides[t.id] : null,
     }));
-    return NextResponse.json({ tasks: merged });
+    const ordered = applyOrder(merged, (t) => t.id, getOrderMap("upcoming"));
+    return NextResponse.json({ tasks: ordered });
   } catch (err) {
     console.error(err);
     return NextResponse.json(

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getLabels } from "@/lib/todoist";
 import { getDb } from "@/lib/db";
-import { getLabelPointsMap } from "@/lib/queries";
+import { getLabelPointsMap, applyOrder, getOrderMap } from "@/lib/queries";
 
 // GET: list Todoist labels merged with their configured point values (0 default).
 export async function GET() {
@@ -13,7 +13,8 @@ export async function GET() {
       color: l.color ?? null,
       points: pointsMap[l.name] ?? 0,
     }));
-    return NextResponse.json({ labels: merged });
+    const ordered = applyOrder(merged, (l) => l.name, getOrderMap("labels"));
+    return NextResponse.json({ labels: ordered });
   } catch (err) {
     console.error(err);
     return NextResponse.json(
