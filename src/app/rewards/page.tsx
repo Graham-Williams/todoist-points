@@ -165,30 +165,30 @@ export default function RewardsPage() {
         onSubmit={addReward}
         className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-4"
       >
-        <div className="flex flex-col gap-1">
+        <div className="flex w-full flex-col gap-1 sm:w-auto">
           <label className="text-xs text-slate-400">Reward name</label>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. 1 hour of Rocket League"
-            className="w-64 rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-white focus:border-emerald-500 focus:outline-none"
+            className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-base text-white focus:border-emerald-500 focus:outline-none sm:w-64 sm:text-sm"
             required
           />
         </div>
-        <div className="flex flex-col gap-1">
+        <div className="flex w-full flex-col gap-1 sm:w-auto">
           <label className="text-xs text-slate-400">Cost</label>
           <input
             type="number"
             value={cost}
             onChange={(e) => setCost(e.target.value)}
             placeholder="100"
-            className="w-28 rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-white focus:border-emerald-500 focus:outline-none"
+            className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-base text-white focus:border-emerald-500 focus:outline-none sm:w-28 sm:text-sm"
             required
           />
         </div>
         <button
           type="submit"
-          className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
+          className="w-full rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 sm:w-auto"
         >
           Add reward
         </button>
@@ -208,12 +208,14 @@ export default function RewardsPage() {
           liClassName="px-4 py-3"
           renderItem={(r) => (
             <div
-              className={`flex items-center justify-between gap-4 ${
+              className={`flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4 ${
                 r.active ? "" : "opacity-50"
               }`}
             >
               <div className="min-w-0">
-                <div className="truncate text-sm text-slate-100">{r.name}</div>
+                <div className="break-words text-sm text-slate-100">
+                  {r.name}
+                </div>
                 {editingId === r.id ? (
                   <div className="mt-1 flex items-center gap-2">
                     <input
@@ -222,7 +224,7 @@ export default function RewardsPage() {
                       value={editCost}
                       onChange={(e) => setEditCost(e.target.value)}
                       disabled={editBusy}
-                      className="w-24 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-right text-xs text-white focus:border-emerald-500 focus:outline-none disabled:opacity-50"
+                      className="w-24 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-right text-base text-white focus:border-emerald-500 focus:outline-none disabled:opacity-50 sm:text-xs"
                     />
                     <span className="text-xs text-slate-400">pts</span>
                     <button
@@ -252,23 +254,23 @@ export default function RewardsPage() {
                   </div>
                 )}
               </div>
-              <div className="flex shrink-0 items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
                 <button
                   onClick={() => redeem(r.id)}
                   disabled={!r.active || balance < r.cost}
-                  className="rounded-md bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-40"
+                  className="shrink-0 whitespace-nowrap rounded-md bg-sky-600 px-3 py-2 text-xs sm:py-1.5 font-semibold text-white hover:bg-sky-500 disabled:opacity-40"
                 >
                   Redeem
                 </button>
                 <button
                   onClick={() => toggleActive(r)}
-                  className="rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
+                  className="shrink-0 whitespace-nowrap rounded-md border border-slate-700 px-3 py-2 text-xs sm:py-1.5 text-slate-300 hover:bg-slate-800"
                 >
                   {r.active ? "Deactivate" : "Activate"}
                 </button>
                 <button
                   onClick={() => remove(r.id)}
-                  className="rounded-md border border-rose-900 px-3 py-1.5 text-xs text-rose-400 hover:bg-rose-950"
+                  className="shrink-0 whitespace-nowrap rounded-md border border-rose-900 px-3 py-2 text-xs sm:py-1.5 text-rose-400 hover:bg-rose-950"
                 >
                   Delete
                 </button>

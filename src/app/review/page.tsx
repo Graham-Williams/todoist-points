@@ -294,9 +294,9 @@ export default function ReviewPage() {
             ulClassName="divide-y divide-slate-800 rounded-xl border border-slate-800"
             liClassName="px-4 py-3"
             renderItem={(t) => (
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm text-slate-100">
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-4">
+                <div className="min-w-0 sm:flex-1">
+                  <div className="break-words text-sm text-slate-100">
                     {t.content}
                   </div>
                   <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -309,14 +309,19 @@ export default function ReviewPage() {
                       </span>
                     ))}
                     {t.completed_at && (
-                      <span className="text-xs text-slate-500">
+                      <span className="whitespace-nowrap text-xs text-slate-500">
                         {formatDate(t.completed_at)}
                       </span>
                     )}
                   </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <span className="text-xs text-slate-500">0 = discard</span>
+                <div className="flex items-center gap-2 sm:shrink-0">
+                  {/* The intro paragraph already says "Enter 0 to discard", so
+                      drop the inline hint on narrow screens where it would
+                      steal width from the controls. */}
+                  <span className="hidden text-xs text-slate-500 sm:inline">
+                    0 = discard
+                  </span>
                   <input
                     type="number"
                     min={0}
@@ -326,19 +331,19 @@ export default function ReviewPage() {
                       setPointValue(t.completion_id, e.target.value)
                     }
                     disabled={busy[t.completion_id]}
-                    className="w-20 rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-right text-sm text-white focus:border-emerald-500 focus:outline-none disabled:opacity-50"
+                    className="w-24 shrink-0 rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-right text-base text-white focus:border-emerald-500 focus:outline-none disabled:opacity-50 sm:w-20 sm:text-sm"
                   />
                   <button
                     onClick={() => award(t.completion_id)}
                     disabled={busy[t.completion_id]}
-                    className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-40"
+                    className="shrink-0 whitespace-nowrap rounded-md bg-emerald-600 px-3 py-2 text-xs sm:py-1.5 font-semibold text-white hover:bg-emerald-500 disabled:opacity-40"
                   >
                     Assign
                   </button>
                   <button
                     onClick={() => discard(t.completion_id)}
                     disabled={busy[t.completion_id]}
-                    className="rounded-md border border-rose-900 px-3 py-1.5 text-xs text-rose-400 hover:bg-rose-950 disabled:opacity-40"
+                    className="shrink-0 whitespace-nowrap rounded-md border border-rose-900 px-3 py-2 text-xs sm:py-1.5 text-rose-400 hover:bg-rose-950 disabled:opacity-40"
                   >
                     Discard
                   </button>
@@ -378,13 +383,13 @@ export default function ReviewPage() {
             ulClassName="divide-y divide-slate-800 rounded-xl border border-slate-800"
             liClassName="px-4 py-3"
             renderItem={(t) => (
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm text-slate-100">
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-4">
+                <div className="min-w-0 sm:flex-1">
+                  <div className="break-words text-sm text-slate-100">
                     {t.content}
                   </div>
                   <div className="mt-1 flex flex-wrap items-center gap-2">
-                    <span className="rounded-full border border-emerald-900 bg-emerald-950/40 px-2 py-0.5 text-xs text-emerald-300">
+                    <span className="whitespace-nowrap rounded-full border border-emerald-900 bg-emerald-950/40 px-2 py-0.5 text-xs text-emerald-300">
                       Due {formatDue(t.due)}
                     </span>
                     {t.labels.map((label) => (
@@ -396,13 +401,13 @@ export default function ReviewPage() {
                       </span>
                     ))}
                     {t.points != null && (
-                      <span className="text-xs font-medium text-emerald-400">
+                      <span className="whitespace-nowrap text-xs font-medium text-emerald-400">
                         Pre-assigned: {t.points} pts
                       </span>
                     )}
                   </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="flex items-center gap-2 sm:shrink-0">
                   <input
                     type="number"
                     min={1}
@@ -410,12 +415,12 @@ export default function ReviewPage() {
                     value={upcomingInputs[t.id] ?? ""}
                     onChange={(e) => setUpcomingInput(t.id, e.target.value)}
                     disabled={upcomingBusy[t.id]}
-                    className="w-20 rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-right text-sm text-white focus:border-emerald-500 focus:outline-none disabled:opacity-50"
+                    className="w-24 shrink-0 rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-right text-base text-white focus:border-emerald-500 focus:outline-none disabled:opacity-50 sm:w-20 sm:text-sm"
                   />
                   <button
                     onClick={() => saveOverride(t)}
                     disabled={upcomingBusy[t.id]}
-                    className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-40"
+                    className="shrink-0 whitespace-nowrap rounded-md bg-emerald-600 px-3 py-2 text-xs sm:py-1.5 font-semibold text-white hover:bg-emerald-500 disabled:opacity-40"
                   >
                     Save
                   </button>
@@ -423,7 +428,7 @@ export default function ReviewPage() {
                     <button
                       onClick={() => clearOverride(t.id)}
                       disabled={upcomingBusy[t.id]}
-                      className="rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+                      className="shrink-0 whitespace-nowrap rounded-md border border-slate-700 px-3 py-2 text-xs sm:py-1.5 text-slate-300 hover:bg-slate-800 disabled:opacity-40"
                     >
                       Clear
                     </button>

@@ -31,7 +31,7 @@ export default function NavBar({ showSignOut }: { showSignOut: boolean }) {
 
   return (
     <header className="border-b border-slate-800 bg-slate-900/60">
-      <nav className="mx-auto flex max-w-5xl items-center gap-8 px-6 py-4">
+      <nav className="mx-auto flex max-w-5xl items-center gap-4 px-4 py-4 sm:px-6 lg:gap-8">
         <Link
           href="/"
           className="shrink-0 whitespace-nowrap text-lg font-bold tracking-tight text-emerald-400 hover:text-emerald-300"
@@ -70,7 +70,7 @@ export default function NavBar({ showSignOut }: { showSignOut: boolean }) {
             aria-label="Toggle menu"
             aria-expanded={open}
             onClick={() => setOpen((v) => !v)}
-            className="rounded-md px-2 py-1 text-xl leading-none text-slate-300 hover:text-white lg:hidden"
+            className="-mr-1 rounded-md p-2 text-xl leading-none text-slate-300 hover:text-white lg:hidden"
           >
             ☰
           </button>
@@ -80,7 +80,7 @@ export default function NavBar({ showSignOut }: { showSignOut: boolean }) {
       {/* Mobile dropdown panel (below the header). Toggles only the links. */}
       {open && (
         <div className="border-t border-slate-800 lg:hidden">
-          <div className="mx-auto flex max-w-5xl flex-col px-6 py-2 text-sm">
+          <div className="mx-auto flex max-w-5xl flex-col px-4 py-2 text-sm sm:px-6">
             {navLinks.map((l) => (
               <Link
                 key={l.href}

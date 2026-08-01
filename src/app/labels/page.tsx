@@ -100,14 +100,14 @@ export default function LabelsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-bold">Labels &amp; Points</h1>
         <div className="flex items-center gap-3">
           {status && <span className="text-sm text-slate-400">{status}</span>}
           <button
             onClick={save}
             disabled={saving || loading}
-            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+            className="shrink-0 whitespace-nowrap rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
           >
             {saving ? "Saving…" : "Save points"}
           </button>
@@ -137,12 +137,14 @@ export default function LabelsPage() {
           liClassName="px-4 py-3"
           renderItem={(l) => (
             <div className="flex items-center justify-between gap-4">
-              <span className="text-sm text-slate-200">{l.name}</span>
+              <span className="min-w-0 break-words text-sm text-slate-200">
+                {l.name}
+              </span>
               <input
                 type="number"
                 value={l.points}
                 onChange={(e) => setPoints(l.name, e.target.value)}
-                className="w-24 rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-right text-sm text-white focus:border-emerald-500 focus:outline-none"
+                className="w-24 shrink-0 rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-right text-base text-white focus:border-emerald-500 focus:outline-none sm:text-sm"
               />
             </div>
           )}

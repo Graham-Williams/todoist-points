@@ -122,7 +122,7 @@ export default function EarningControls({
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           disabled={busy}
-          className="w-20 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-right text-xs text-white focus:border-emerald-500 focus:outline-none disabled:opacity-50"
+          className="w-20 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-right text-base text-white focus:border-emerald-500 focus:outline-none disabled:opacity-50 sm:text-xs"
         />
         <span className="text-xs text-slate-400">pts</span>
         <button
