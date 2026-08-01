@@ -21,7 +21,8 @@ export default function RootLayout({
             single global auto-sync loop lives inside NavBar (AutoSync stays
             mounted) and drives all pages via the `todoist:synced` event. */}
         <NavBar showSignOut={!!process.env.APP_PASSWORD} />
-        <main className="mx-auto max-w-4xl px-6 py-8">{children}</main>
+        {/* Tighter gutters on phones — px-6 ate 48px of a 390px screen. */}
+        <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6">{children}</main>
         <SiteFooter />
       </body>
     </html>

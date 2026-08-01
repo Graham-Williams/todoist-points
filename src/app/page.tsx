@@ -58,15 +58,18 @@ export default function DashboardPage() {
         ) : (
           <ul className="divide-y divide-slate-800 rounded-xl border border-slate-800">
             {stats.recentEarnings.map((e) => (
-              <li key={e.id} className="flex items-center justify-between gap-4 px-4 py-3">
+              <li
+                key={e.id}
+                className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
+              >
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <span className="truncate text-sm text-slate-200">{e.title}</span>
+                  <span className="break-words text-sm text-slate-200">{e.title}</span>
                   {e.badges.map((badge, i) => (
                     <SourceBadge key={`${badge.kind}-${badge.text}-${i}`} badge={badge} />
                   ))}
                 </div>
-                <div className="flex shrink-0 items-center gap-3">
-                  <span className="font-semibold text-emerald-400">+{e.points}</span>
+                <div className="flex items-center gap-3 sm:shrink-0">
+                  <span className="shrink-0 font-semibold text-emerald-400">+{e.points}</span>
                   <EarningControls id={e.id} points={e.points} />
                 </div>
               </li>
@@ -82,8 +85,8 @@ export default function DashboardPage() {
         ) : (
           <ul className="divide-y divide-slate-800 rounded-xl border border-slate-800">
             {stats.redemptions.map((e) => (
-              <li key={e.id} className="flex items-center justify-between gap-4 px-4 py-3">
-                <span className="truncate text-sm text-slate-200">{e.description}</span>
+              <li key={e.id} className="flex items-start justify-between gap-4 px-4 py-3">
+                <span className="min-w-0 break-words text-sm text-slate-200">{e.description}</span>
                 <span className="shrink-0 font-semibold text-rose-400">{e.points}</span>
               </li>
             ))}
