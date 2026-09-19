@@ -126,6 +126,38 @@ test("CF-Visitor is authoritative over X-Forwarded-Proto", () => {
   );
 });
 
+test("an oversized CF-Visitor is ignored even when it parses", () => {
+  // The 256-byte cap is a DoS guard in front of JSON.parse. The pre-existing
+  // oversized case used a junk scheme, so it returned null with or without the
+  // cap — it never pinned it. These two do: the payload is a *genuine*
+  // {"scheme":"https"} with padding, so deleting the cap changes the answer.
+  const padded = (total: number) =>
+    `{"scheme":"https","pad":"${"a".repeat(total - 27)}"}`;
+
+  const over = padded(300);
+  assert.equal(over.length, 300);
+  assert.equal(JSON.parse(over).scheme, "https"); // it really is parseable
+  assert.equal(cfVisitorScheme(over), null); // …and still refused
+
+  // Consequence, end to end: the oversized header contributes NOTHING, so the
+  // decision falls back to X-Forwarded-Proto and the http request redirects.
+  // Without the cap, CF-Visitor would say "https" and this would be null.
+  assert.equal(
+    httpsRedirectTarget(input({ forwardedProto: "http", cfVisitor: over })),
+    `https://${HOST}/review`
+  );
+
+  // Companion: a value right AT the cap is still honoured, so the guard can't
+  // be "fixed" by tightening it until real Cloudflare headers stop working.
+  const atCap = padded(256);
+  assert.equal(atCap.length, 256);
+  assert.equal(cfVisitorScheme(atCap), "https");
+  assert.equal(
+    httpsRedirectTarget(input({ forwardedProto: "http", cfVisitor: atCap })),
+    null
+  );
+});
+
 test("scheme match is case/whitespace insensitive", () => {
   assert.equal(isForwardedPlainHttp("HTTP"), true);
   assert.equal(isForwardedPlainHttp(" http "), true);
