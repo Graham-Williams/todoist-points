@@ -63,19 +63,38 @@ docker compose exec todoist-points node -e "fetch('http://localhost:3000/',{redi
 ```
 
 To confirm **HTTPS is enforced at the origin** (issue #21) — a request that
-looks like it arrived over plain http (public `Host` + `X-Forwarded-Proto:
-http`) must 301 to the https URL, and every response must carry HSTS:
+looks like it arrived over plain http through Cloudflare (public `Host` +
+`X-Forwarded-Proto: http` + a `CF-Connecting-IP` marker) must 307 to the https
+URL, uncacheably, and every response must carry HSTS:
 
 ```bash
-docker compose exec todoist-points node -e "fetch('http://localhost:3000/',{redirect:'manual',headers:{'X-Forwarded-Proto':'http','Host':'todoist-points.graham-williams.com'}}).then(r=>console.log(r.status,r.headers.get('location'),r.headers.get('strict-transport-security')))"
-# 301 https://todoist-points.graham-williams.com/ max-age=31536000
+docker compose exec todoist-points node -e "fetch('http://localhost:3000/',{redirect:'manual',headers:{'X-Forwarded-Proto':'http','Host':'todoist-points.graham-williams.com','CF-Connecting-IP':'203.0.113.9'}}).then(r=>console.log(r.status,r.headers.get('location'),r.headers.get('cache-control'),r.headers.get('strict-transport-security')))"
+# 307 https://todoist-points.graham-williams.com/ no-store max-age=31536000
 ```
 
-The healthcheck above stays **200**: it uses `Host: localhost:3000`, and the
-redirect fires only for the public host. (Next synthesizes an
-`x-forwarded-proto: http` header for in-network calls, so the Host is what
-separates a probe from a real visitor — don't "simplify" that away.) From
-outside:
+⚠️ **307, never 301** — a permanent redirect gets cached by browsers (and by
+Cloudflare for cacheable extensions), so a scheme redirect issued in error
+would outlive the fix. 307 also preserves the method, so a plain-http POST is
+re-sent over https rather than downgraded to a bodiless GET.
+
+The healthcheck above stays **200**, and so does a request to the public host
+that carries **no Cloudflare marker** — the redirect needs one:
+
+```bash
+docker compose exec todoist-points node -e "fetch('http://localhost:3000/review',{redirect:'manual',headers:{'Host':'todoist-points.graham-williams.com'}}).then(r=>console.log(r.status,r.headers.get('location')))"
+# 307 http://localhost:3000/login?next=%2Freview  <- the PASSWORD gate, not the https redirect.
+# Anything pointing at https://todoist-points.graham-williams.com/review here
+# would be a redirect LOOP: the request already asked for that URL.
+```
+
+That marker requirement is load-bearing: Next synthesizes an
+`x-forwarded-proto: http` header for any request that didn't send one, so
+without it the app cannot tell "plain http visitor" from "request that never
+went through Cloudflare" and would bounce the latter to itself forever. The
+`Host` guard is the second, independent reason the in-network probe is
+untouched. Don't "simplify" either away.
+
+From outside:
 
 ```bash
 curl -sI https://todoist-points.graham-williams.com/login | grep -i strict-transport-security
