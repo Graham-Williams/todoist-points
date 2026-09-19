@@ -62,6 +62,25 @@ docker compose exec todoist-points node -e "fetch('http://localhost:3000/',{redi
 # 307 (password gate on) or 403 (CF gate on) = locked. 200 = OPEN, misconfigured.
 ```
 
+To confirm **HTTPS is enforced at the origin** (issue #21) — a request that
+looks like it arrived over plain http (public `Host` + `X-Forwarded-Proto:
+http`) must 301 to the https URL, and every response must carry HSTS:
+
+```bash
+docker compose exec todoist-points node -e "fetch('http://localhost:3000/',{redirect:'manual',headers:{'X-Forwarded-Proto':'http','Host':'todoist-points.graham-williams.com'}}).then(r=>console.log(r.status,r.headers.get('location'),r.headers.get('strict-transport-security')))"
+# 301 https://todoist-points.graham-williams.com/ max-age=31536000
+```
+
+The healthcheck above stays **200**: it uses `Host: localhost:3000`, and the
+redirect fires only for the public host. (Next synthesizes an
+`x-forwarded-proto: http` header for in-network calls, so the Host is what
+separates a probe from a real visitor — don't "simplify" that away.) From
+outside:
+
+```bash
+curl -sI https://todoist-points.graham-williams.com/login | grep -i strict-transport-security
+```
+
 ## Redeploy (from main)
 
 ```bash
