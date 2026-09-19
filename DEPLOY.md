@@ -68,9 +68,22 @@ looks like it arrived over plain http through Cloudflare (public `Host` +
 URL, uncacheably, and every response must carry HSTS:
 
 ```bash
-docker compose exec todoist-points node -e "fetch('http://localhost:3000/',{redirect:'manual',headers:{'X-Forwarded-Proto':'http','Host':'todoist-points.graham-williams.com','CF-Connecting-IP':'203.0.113.9'}}).then(r=>console.log(r.status,r.headers.get('location'),r.headers.get('cache-control'),r.headers.get('strict-transport-security')))"
-# 307 https://todoist-points.graham-williams.com/ no-store max-age=31536000
+docker compose exec todoist-points node -e "require('node:http').request({host:'127.0.0.1',port:3000,path:'/',setHost:false,headers:{'Host':'todoist-points.graham-williams.com','X-Forwarded-Proto':'http','CF-Connecting-IP':'203.0.113.9'}},r=>console.log(r.statusCode,r.headers.location,r.headers['cache-control'],r.headers.vary,r.headers['strict-transport-security'])).end()"
+# 307 https://todoist-points.graham-williams.com/ no-store X-Forwarded-Proto max-age=31536000
 ```
+
+⚠️ **Use `node:http` with `setHost: false` here — `fetch()` CANNOT test this,
+and fails in a way that looks like a broken feature.** Node's global `fetch`
+is `undici`, which **silently overwrites any `Host` header you pass** with the
+URL's own authority. So a `fetch('http://localhost:3000/', {headers:{Host:
+'todoist-points.graham-williams.com', ...}})` arrives at the app as
+`Host: localhost:3000`, the `Host === APP_HOST` guard correctly declines to
+redirect, and you get `307 /login?next=%2F` — the **password gate**, not the
+https redirect. That is the feature working, reported as a false negative.
+`http.request({setHost: false})` is the only form that puts the header you
+typed on the wire. (Over a non-interactive ssh, add `-T` to
+`docker compose exec` and redirect its stdin from `/dev/null`, or it will eat
+the rest of your script.)
 
 ⚠️ **307, never 301** — a permanent redirect gets cached by browsers (and by
 Cloudflare for cacheable extensions), so a scheme redirect issued in error
@@ -81,8 +94,10 @@ The healthcheck above stays **200**, and so does a request to the public host
 that carries **no Cloudflare marker** — the redirect needs one:
 
 ```bash
-docker compose exec todoist-points node -e "fetch('http://localhost:3000/review',{redirect:'manual',headers:{'Host':'todoist-points.graham-williams.com'}}).then(r=>console.log(r.status,r.headers.get('location')))"
-# 307 http://localhost:3000/login?next=%2Freview  <- the PASSWORD gate, not the https redirect.
+docker compose exec todoist-points node -e "require('node:http').request({host:'127.0.0.1',port:3000,path:'/review',setHost:false,headers:{'Host':'todoist-points.graham-williams.com'}},r=>console.log(r.statusCode,r.headers.location)).end()"
+# 307 /login?next=%2Freview  <- the PASSWORD gate, not the https redirect.
+# (Relative Location by design — the standalone server's own host is
+#  0.0.0.0:3000, so an absolute one would be unreachable; see CLAUDE.md.)
 # Anything pointing at https://todoist-points.graham-williams.com/review here
 # would be a redirect LOOP: the request already asked for that URL.
 ```
