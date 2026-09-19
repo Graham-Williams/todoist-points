@@ -1,18 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE, safeNextPath, verifySessionToken } from "@/lib/auth";
-import { HSTS_HEADER, HSTS_VALUE, httpsRedirectTarget } from "@/lib/https";
+import {
+  HSTS_HEADER,
+  HSTS_VALUE,
+  HTTPS_REDIRECT_HEADERS,
+  HTTPS_REDIRECT_STATUS,
+  httpsRedirectTarget,
+} from "@/lib/https";
 
 // Authentication / defense-in-depth for the deployment. Two independent gates,
 // each env-activated, plus a CSRF/origin pin and origin-side HTTPS
 // enforcement:
 //
-// 0. HTTPS ENFORCEMENT (runs FIRST, before any gate). When the Cloudflare
-//    tunnel forwards `X-Forwarded-Proto: http` and APP_HOST is configured, the
-//    request is 301'd to `https://<APP_HOST><path><query>` — so a plain-http
-//    visitor never reaches the password gate or the login page. Every response
-//    this middleware produces (including the short-circuit 301/401/403 ones)
-//    carries `Strict-Transport-Security: max-age=31536000`. Rules and the
-//    `req.url` gotcha live in src/lib/https.ts.
+// 0. HTTPS ENFORCEMENT (runs FIRST, before any gate). When a request carries a
+//    Cloudflare marker, says the visitor arrived over plain http, and is
+//    addressed to APP_HOST, it is 307'd (temporary, no-store) to
+//    `https://<APP_HOST><path><query>` — so a plain-http visitor never reaches
+//    the password gate or the login page. Anything without a Cloudflare marker
+//    fails OPEN, because Next synthesizes `x-forwarded-proto: http` and a
+//    proto-only rule would bounce such a request to the URL it already asked
+//    for. Every response this middleware produces (including the short-circuit
+//    307/401/403 ones) carries `Strict-Transport-Security: max-age=31536000`.
+//    Full rules, the header-synthesis gotcha and the `req.url` gotcha live in
+//    src/lib/https.ts.
 //
 // A. APP-LEVEL PASSWORD GATE (the active gate after the Cloudflare-Access
 //    cutover). When APP_PASSWORD is set, every request that isn't a public
@@ -171,25 +181,29 @@ export async function middleware(req: NextRequest) {
 async function handle(req: NextRequest): Promise<NextResponse> {
   // (0) HTTPS enforcement — before every gate, so a plain-http request is
   // bounced to https instead of being served the login page in the clear.
-  // Fires only on `X-Forwarded-Proto: http` from a request addressed to the
-  // public host, so in-network probes (Host: localhost:3000) are untouched —
-  // Next synthesizes a forwarded-proto header for them, so the Host check is
-  // what keeps the deploy healthcheck at 200. The Host is a GUARD only: the
+  // Fires only when the request carries a Cloudflare marker AND reports the
+  // visitor's scheme as http AND is addressed to the public host, so both
+  // in-network probes (Host: localhost:3000) and anything that never went
+  // through Cloudflare are served normally. The Host is a GUARD only: the
   // target is always built from APP_HOST, never from req.url or the Host
-  // header.
-  const redirectTarget = httpsRedirectTarget(
-    req.headers.get("x-forwarded-proto"),
-    req.headers.get("host"),
-    process.env.APP_HOST,
-    req.nextUrl.pathname,
-    req.nextUrl.search
-  );
+  // header. See src/lib/https.ts for why each condition is load-bearing.
+  const redirectTarget = httpsRedirectTarget({
+    forwardedProto: req.headers.get("x-forwarded-proto"),
+    requestHost: req.headers.get("host"),
+    cfConnectingIp: req.headers.get("cf-connecting-ip"),
+    cfVisitor: req.headers.get("cf-visitor"),
+    appHost: process.env.APP_HOST,
+    pathname: req.nextUrl.pathname,
+    search: req.nextUrl.search,
+  });
   if (redirectTarget) {
     // Built by hand rather than via NextResponse.redirect(new URL(...)) so the
     // path/query we assembled reach the Location header byte-for-byte.
+    // 307, never 301: a permanent redirect is cached by browsers and would
+    // outlive any fix to the logic that produced it.
     return new NextResponse(null, {
-      status: 301,
-      headers: { Location: redirectTarget },
+      status: HTTPS_REDIRECT_STATUS,
+      headers: { ...HTTPS_REDIRECT_HEADERS, Location: redirectTarget },
     });
   }
 
