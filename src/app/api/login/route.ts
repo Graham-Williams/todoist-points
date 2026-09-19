@@ -9,6 +9,7 @@ import {
   recordFailure,
   clearFailures,
   safeNextPath,
+  sessionCookieOptions,
 } from "@/lib/auth";
 
 // Redirect with a RELATIVE Location so the browser resolves it against the real
@@ -62,15 +63,9 @@ export async function POST(req: NextRequest) {
   clearFailures(ip);
   const token = await createSessionToken(sessionSecret);
   const res = redirect(next);
-  res.cookies.set(SESSION_COOKIE, token, {
-    httpOnly: true,
-    // Secure in production (behind Cloudflare the browser<->edge hop is HTTPS,
-    // so the flag is honored even though the tunnel<->container hop is HTTP).
-    // Relaxed in dev so the gate is testable over http://localhost.
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: SESSION_MAX_AGE_S,
-  });
+  // HttpOnly + SameSite=Lax always; Secure in production (behind Cloudflare
+  // the browser<->edge hop is HTTPS, so the flag is honored even though the
+  // tunnel<->container hop is HTTP). Attributes live in sessionCookieOptions.
+  res.cookies.set(SESSION_COOKIE, token, sessionCookieOptions(SESSION_MAX_AGE_S));
   return res;
 }

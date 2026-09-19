@@ -120,6 +120,38 @@ export async function verifySessionToken(
   return timingSafeEqualStr(sig, expected);
 }
 
+export interface SessionCookieOptions {
+  httpOnly: true;
+  secure: boolean;
+  sameSite: "lax";
+  path: "/";
+  maxAge: number;
+}
+
+/**
+ * Attributes for the session cookie, in ONE place so the set-on-login and
+ * clear-on-logout paths can never drift apart.
+ *
+ * `Secure` is on in production (the deployment is https-only — see the origin
+ * HTTPS enforcement in src/lib/https.ts) and off outside it, so the gate stays
+ * testable over http://localhost in dev. `HttpOnly` blocks script access and
+ * `SameSite=Lax` blocks cross-site submission; both are unconditional.
+ *
+ * @param maxAge cookie lifetime in seconds — pass 0 to clear the cookie.
+ */
+export function sessionCookieOptions(
+  maxAge: number = SESSION_MAX_AGE_S,
+  nodeEnv: string | undefined = process.env.NODE_ENV
+): SessionCookieOptions {
+  return {
+    httpOnly: true,
+    secure: nodeEnv === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge,
+  };
+}
+
 /**
  * Open-redirect-safe validation of a `next` target. Only same-site absolute
  * paths are allowed; anything else falls back to "/". Rejects protocol-relative
