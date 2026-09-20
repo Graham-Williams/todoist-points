@@ -97,10 +97,50 @@ export const HTTPS_REDIRECT_HEADERS: Readonly<Record<string, string>> = Object.f
   Vary: "X-Forwarded-Proto",
 });
 
+/**
+ * Append a field name to a `Vary` header without clobbering what is already
+ * there. Mirrors Werkzeug's `resp.vary.add()` in the five Flask siblings:
+ * idempotent, case-insensitive, and it leaves an existing `Vary: Cookie`
+ * (which Next/the session layer may add) intact. `Vary: *` already covers
+ * everything, so it is left alone.
+ */
+export function addVary(headers: Headers, field: string): void {
+  const current = headers.get("Vary");
+  if (!current || current.trim().length === 0) {
+    headers.set("Vary", field);
+    return;
+  }
+  if (current.trim() === "*") return;
+  const already = current
+    .split(",")
+    .some((token) => token.trim().toLowerCase() === field.toLowerCase());
+  if (!already) headers.set("Vary", `${current}, ${field}`);
+}
+
 // A bare hostname with an optional port. Anything else (scheme, userinfo,
 // slash, backslash, whitespace, control chars) is refused so a fat-fingered
 // APP_HOST can never turn the redirect into an open redirect.
-const SAFE_HOST_RE = /^[A-Za-z0-9.-]+(?::\d{1,5})?$/;
+//
+// ⚠️ The host part must contain a DOT and must not be a bare IP literal.
+// APP_HOST is a PUBLIC origin pin and a public hostname always has a dot.
+// Without those two guards `APP_HOST=localhost` VALIDATED, so every plain-http
+// visitor was handed a live `Location: https://localhost/…` — a redirect
+// broken for everyone, and silent precisely BECAUSE the value passed, so the
+// fail-open branch never fired. Such a value now fails open instead, which is
+// the safe outcome. An explicit `:port` is still allowed (this repo's
+// deliberate difference from the four Flask siblings; their APP_HOST is a bare
+// hostname). Measured on staging by the break-staging sweep, 2026-09-19.
+//   (?=[^:]*\.)                     the host part (before any port) has a dot.
+//                                   `[^:]*` cannot cross the port separator,
+//                                   so `localhost:3000` fails here.
+//   (?!.*\.\d+(?::\d{1,5})?$)       the FINAL label is not all-digits. That
+//                                   rejects every IPv4 literal (`127.0.0.1`,
+//                                   with or without a port) and keeps this in
+//                                   step with the Flask siblings' matching
+//                                   `\.(?![0-9]+\Z)` rule.
+// IPv6 literals were never accepted: ':' only appears here as the port
+// separator, and '[' ']' are outside the character class.
+const SAFE_HOST_RE = /^(?=[^:]*\.)(?!.*\.\d+(?::\d{1,5})?$)[A-Za-z0-9.-]+(?::\d{1,5})?$/;
 
 /** True when `host` is a plain host[:port] safe to put in a Location header. */
 export function isSafeRedirectHost(host: string | null | undefined): host is string {
