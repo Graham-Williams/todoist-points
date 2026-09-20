@@ -13,6 +13,7 @@ import {
   clearFailures,
   clientIp,
   SESSION_MAX_AGE_S,
+  sessionCookieOptions,
   _resetRateLimiterForTests,
 } from "./auth.ts";
 
@@ -106,4 +107,35 @@ test("clientIp: prefers CF-Connecting-IP, falls back to XFF", () => {
     "198.51.100.9"
   );
   assert.equal(clientIp(new Headers()), "unknown");
+});
+
+// --- session cookie attributes (issue #21) --------------------------------
+
+test("session cookie is HttpOnly + SameSite=Lax + path / in every environment", () => {
+  for (const env of ["production", "development", "test", undefined]) {
+    const opts = sessionCookieOptions(SESSION_MAX_AGE_S, env);
+    assert.equal(opts.httpOnly, true);
+    assert.equal(opts.sameSite, "lax");
+    assert.equal(opts.path, "/");
+    assert.equal(opts.maxAge, SESSION_MAX_AGE_S);
+  }
+});
+
+test("session cookie is Secure in production", () => {
+  assert.equal(sessionCookieOptions(SESSION_MAX_AGE_S, "production").secure, true);
+});
+
+test("session cookie is not Secure outside production (http://localhost dev)", () => {
+  assert.equal(sessionCookieOptions(SESSION_MAX_AGE_S, "development").secure, false);
+  assert.equal(sessionCookieOptions(SESSION_MAX_AGE_S, undefined).secure, false);
+});
+
+test("the logout cookie clears with the same attributes (maxAge 0)", () => {
+  const clear = sessionCookieOptions(0, "production");
+  const set = sessionCookieOptions(SESSION_MAX_AGE_S, "production");
+  assert.equal(clear.maxAge, 0);
+  assert.equal(clear.httpOnly, set.httpOnly);
+  assert.equal(clear.secure, set.secure);
+  assert.equal(clear.sameSite, set.sameSite);
+  assert.equal(clear.path, set.path);
 });

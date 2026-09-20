@@ -62,6 +62,59 @@ docker compose exec todoist-points node -e "fetch('http://localhost:3000/',{redi
 # 307 (password gate on) or 403 (CF gate on) = locked. 200 = OPEN, misconfigured.
 ```
 
+To confirm **HTTPS is enforced at the origin** (issue #21) — a request that
+looks like it arrived over plain http through Cloudflare (public `Host` +
+`X-Forwarded-Proto: http` + a `CF-Connecting-IP` marker) must 307 to the https
+URL, uncacheably, and every response must carry HSTS:
+
+```bash
+docker compose exec todoist-points node -e "require('node:http').request({host:'127.0.0.1',port:3000,path:'/',setHost:false,headers:{'Host':'todoist-points.graham-williams.com','X-Forwarded-Proto':'http','CF-Connecting-IP':'203.0.113.9'}},r=>console.log(r.statusCode,r.headers.location,r.headers['cache-control'],r.headers.vary,r.headers['strict-transport-security'])).end()"
+# 307 https://todoist-points.graham-williams.com/ no-store X-Forwarded-Proto max-age=31536000
+```
+
+⚠️ **Use `node:http` with `setHost: false` here — `fetch()` CANNOT test this,
+and fails in a way that looks like a broken feature.** Node's global `fetch`
+is `undici`, which **silently overwrites any `Host` header you pass** with the
+URL's own authority. So a `fetch('http://localhost:3000/', {headers:{Host:
+'todoist-points.graham-williams.com', ...}})` arrives at the app as
+`Host: localhost:3000`, the `Host === APP_HOST` guard correctly declines to
+redirect, and you get `307 /login?next=%2F` — the **password gate**, not the
+https redirect. That is the feature working, reported as a false negative.
+`http.request({setHost: false})` is the only form that puts the header you
+typed on the wire. (Over a non-interactive ssh, add `-T` to
+`docker compose exec` and redirect its stdin from `/dev/null`, or it will eat
+the rest of your script.)
+
+⚠️ **307, never 301** — a permanent redirect gets cached by browsers (and by
+Cloudflare for cacheable extensions), so a scheme redirect issued in error
+would outlive the fix. 307 also preserves the method, so a plain-http POST is
+re-sent over https rather than downgraded to a bodiless GET.
+
+The healthcheck above stays **200**, and so does a request to the public host
+that carries **no Cloudflare marker** — the redirect needs one:
+
+```bash
+docker compose exec todoist-points node -e "require('node:http').request({host:'127.0.0.1',port:3000,path:'/review',setHost:false,headers:{'Host':'todoist-points.graham-williams.com'}},r=>console.log(r.statusCode,r.headers.location)).end()"
+# 307 /login?next=%2Freview  <- the PASSWORD gate, not the https redirect.
+# (Relative Location by design — the standalone server's own host is
+#  0.0.0.0:3000, so an absolute one would be unreachable; see CLAUDE.md.)
+# Anything pointing at https://todoist-points.graham-williams.com/review here
+# would be a redirect LOOP: the request already asked for that URL.
+```
+
+That marker requirement is load-bearing: Next synthesizes an
+`x-forwarded-proto: http` header for any request that didn't send one, so
+without it the app cannot tell "plain http visitor" from "request that never
+went through Cloudflare" and would bounce the latter to itself forever. The
+`Host` guard is the second, independent reason the in-network probe is
+untouched. Don't "simplify" either away.
+
+From outside:
+
+```bash
+curl -sI https://todoist-points.graham-williams.com/login | grep -i strict-transport-security
+```
+
 ## Redeploy (from main)
 
 ```bash
