@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE, safeNextPath, verifySessionToken } from "@/lib/auth";
 import {
+  addVary,
   HSTS_HEADER,
   HSTS_VALUE,
   HTTPS_REDIRECT_HEADERS,
@@ -175,6 +176,15 @@ function isPublicPath(pathname: string): boolean {
 export async function middleware(req: NextRequest) {
   const res = await handle(req);
   res.headers.set(HSTS_HEADER, HSTS_VALUE);
+  // Vary on EVERY response, not just the 307. The redirect decision keys
+  // entirely off X-Forwarded-Proto (and CF-Visitor), so the 200/302 bodies it
+  // gates are equally scheme-dependent: without this a shared cache could store
+  // an https-served 200 and later hand it to a plain-http request. Theoretical
+  // behind Cloudflare today, but "the edge is one dashboard toggle from
+  // regressing" is this whole feature's threat model.
+  // addVary APPENDS (idempotent, case-insensitive) rather than assigning, so an
+  // existing `Vary: Cookie` survives and the redirect's own Vary is not doubled.
+  addVary(res.headers, "X-Forwarded-Proto");
   return res;
 }
 

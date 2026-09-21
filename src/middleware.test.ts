@@ -304,3 +304,90 @@ test("HSTS value is exactly one year, no includeSubDomains/preload", async () =>
   const res = await middleware(request("/"));
   assert.equal(res.headers.get("strict-transport-security"), "max-age=31536000");
 });
+
+
+// --- B2: Vary is two-sided ---------------------------------------------------
+//
+// Found by the break-staging exploratory-QA sweep, 2026-09-19.
+// `Vary: X-Forwarded-Proto` was on the 307 ONLY. Every other response path is
+// gated by the same scheme decision, so a shared cache could store an
+// https-served 200 and later hand it to a plain-http request. The middleware
+// now stamps it on EVERY response, via `addVary` so nothing is clobbered.
+
+function varyTokens(res: { headers: Headers }): Set<string> {
+  return new Set(
+    (res.headers.get("vary") ?? "")
+      .split(",")
+      .map((t) => t.trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+test("B2: Vary: X-Forwarded-Proto is on every response path, not just the 307", async () => {
+  reset();
+  process.env.APP_HOST = HOST;
+  process.env.APP_PASSWORD = "shared-password";
+  process.env.SESSION_SECRET = "test-secret";
+
+  // Mirrors the HSTS-on-every-path test above, one for one.
+  // 1. the https redirect
+  const redirected = await middleware(request("/", HTTP_VISITOR));
+  assert.equal(redirected.status, 307);
+  assert.ok(varyTokens(redirected).has("x-forwarded-proto"));
+
+  // 2. a normal (passed-through) 200
+  const passthrough = await middleware(request("/api/health", HTTPS_VISITOR));
+  assert.equal(passthrough.status, 200);
+  assert.ok(varyTokens(passthrough).has("x-forwarded-proto"));
+
+  // 3. the middleware's own /login short-circuit
+  const login = await middleware(request("/review", HTTPS_VISITOR));
+  assert.equal(login.status, 307);
+  assert.ok(varyTokens(login).has("x-forwarded-proto"));
+
+  // 4. the 401 for an unauthenticated API call
+  const unauthorized = await middleware(request("/api/sync", HTTPS_VISITOR));
+  assert.equal(unauthorized.status, 401);
+  assert.ok(varyTokens(unauthorized).has("x-forwarded-proto"));
+
+  // 5. the 403 from the CSRF/origin pin
+  const forbidden = await middleware(
+    request("/api/sync", { ...HTTPS_VISITOR, host: "evil.example" }, { method: "POST" })
+  );
+  assert.equal(forbidden.status, 403);
+  assert.ok(varyTokens(forbidden).has("x-forwarded-proto"));
+
+  // ...and with no APP_HOST at all (the fail-open path), which is the shape a
+  // dotless/bare-IP APP_HOST now takes after the B1 fix.
+  reset();
+  const failOpen = await middleware(request("/api/health", HTTP_VISITOR));
+  assert.ok(varyTokens(failOpen).has("x-forwarded-proto"));
+});
+
+test("B2: the 307's own Vary is not doubled (addVary is idempotent)", async () => {
+  // HTTPS_REDIRECT_HEADERS already carries Vary: X-Forwarded-Proto, and the
+  // middleware then calls addVary on the same response. Exactly one token.
+  reset();
+  process.env.APP_HOST = HOST;
+  const res = await middleware(request("/review", HTTP_VISITOR));
+  assert.equal(res.status, 307);
+  assert.equal(res.headers.get("vary"), "X-Forwarded-Proto");
+});
+
+test("B2: an existing Vary on the response survives — it is appended to", async () => {
+  // ⚠️ The regression this guards: assigning Vary would DROP a value already
+  // set (e.g. `Vary: Cookie` from the session layer). Simulated by handing the
+  // helper the very Headers object shape the middleware mutates.
+  const { addVary } = await import("./lib/https.ts");
+  const headers = new Headers({ Vary: "Cookie" });
+  addVary(headers, "X-Forwarded-Proto");
+  assert.deepEqual(
+    new Set(
+      headers
+        .get("vary")!
+        .split(",")
+        .map((t) => t.trim().toLowerCase())
+    ),
+    new Set(["cookie", "x-forwarded-proto"])
+  );
+});

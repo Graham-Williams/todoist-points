@@ -7,6 +7,7 @@ import {
   HSTS_VALUE,
   HTTPS_REDIRECT_HEADERS,
   HTTPS_REDIRECT_STATUS,
+  addVary,
   cfVisitorScheme,
   hasCloudflareSignal,
   httpsRedirectTarget,
@@ -259,13 +260,81 @@ test("a malformed APP_HOST fails open instead of becoming an open redirect", () 
 });
 
 test("host with an explicit port is allowed", () => {
-  assert.equal(isSafeRedirectHost("localhost:3000"), true);
+  // The `:port` allowance is this repo's deliberate difference from the four
+  // Flask siblings and must keep working. NOTE the host part still needs a dot
+  // (B1 below), so this can no longer be spelled `localhost:3000`.
+  assert.equal(isSafeRedirectHost("staging.example.test:3000"), true);
+  assert.equal(isSafeRedirectHost("todoist-points.graham-williams.com:443"), true);
   assert.equal(
     httpsRedirectTarget(
-      input({ requestHost: "localhost:3000", appHost: "localhost:3000", pathname: "/x" })
+      input({
+        requestHost: "staging.example.test:3000",
+        appHost: "staging.example.test:3000",
+        pathname: "/x",
+      })
     ),
-    "https://localhost:3000/x"
+    "https://staging.example.test:3000/x"
   );
+});
+
+// --- B1: a public origin pin always has a dot --------------------------------
+//
+// Found by the break-staging exploratory-QA sweep, 2026-09-19. `localhost` and
+// bare IP literals USED TO VALIDATE, which is exactly why the bug was silent:
+// APP_HOST=localhost handed every plain-http visitor a live
+// `Location: https://localhost/…` — broken for everyone — instead of tripping
+// the loud fail-open branch. Such values now fail open, which is diagnosable.
+
+test("B1: a public origin pin must have a dot and must not be a bare IP", () => {
+  // Strictly a TIGHTENING: every host this app actually uses still passes,
+  // including the `:port` form.
+  for (const good of [
+    HOST,
+    "graham-williams.com",
+    "todoist-points.example.test",
+    "dashboard.ci.example",
+    "a.b",
+    "staging.example.test:3000",
+    `${HOST}:443`,
+  ]) {
+    assert.equal(isSafeRedirectHost(good), true, `expected safe: ${good}`);
+  }
+  for (const bad of [
+    // single-label values — a compose service name or the dev default
+    "localhost",
+    "localhost:3000",
+    "x",
+    "todoist-points",
+    "app",
+    // bare IPv4 literals, with and without a port
+    "127.0.0.1",
+    "127.0.0.1:3000",
+    "0.0.0.0",
+    "192.168.1.1",
+    "255.255.255.255",
+    "100.101.1.28", // the box's own tailnet address
+    // an all-digits final label is not a hostname either (matches the Flask
+    // siblings' `\.(?![0-9]+\Z)` rule)
+    "example.123",
+    "foo.42:8080",
+    // IPv6 was never accepted: ':' is only ever the port separator here
+    "::1",
+    "[::1]",
+  ]) {
+    assert.equal(isSafeRedirectHost(bad), false, `expected unsafe: ${bad}`);
+  }
+});
+
+test("B1: a dotless or bare-IP APP_HOST fails open rather than redirecting", () => {
+  // The whole point of the fix: these land in the fail-open branch instead of
+  // producing a live redirect to a hostname no browser can resolve.
+  for (const bad of ["localhost", "127.0.0.1", "todoist-points"]) {
+    assert.equal(
+      httpsRedirectTarget(input({ requestHost: bad, appHost: bad, pathname: "/" })),
+      null,
+      `expected no redirect: ${bad}`
+    );
+  }
 });
 
 test("control characters in the path can't inject a header", () => {
@@ -275,4 +344,66 @@ test("control characters in the path can't inject a header", () => {
   assert.equal(target, `https://${HOST}/a%0D%0AX-Injected:%201?b=%20c`);
   assert.ok(!target!.includes("\r"));
   assert.ok(!target!.includes("\n"));
+});
+
+
+// --- B2: Vary is two-sided ---------------------------------------------------
+//
+// Found by the break-staging exploratory-QA sweep, 2026-09-19.
+// `Vary: X-Forwarded-Proto` was set on the 307 ONLY. The 200s/302s whose
+// content that redirect decision gates are equally scheme-dependent, so a
+// shared cache could store an https-served 200 and later hand it to a
+// plain-http request. `addVary` is the append primitive that fixes it; the
+// response-path coverage lives in src/middleware.test.ts.
+
+function vary(value: string | null): Headers {
+  const h = new Headers();
+  if (value !== null) h.set("Vary", value);
+  return h;
+}
+
+test("B2: addVary sets Vary when there is none", () => {
+  const h = vary(null);
+  addVary(h, "X-Forwarded-Proto");
+  assert.equal(h.get("Vary"), "X-Forwarded-Proto");
+
+  const blank = vary("   ");
+  addVary(blank, "X-Forwarded-Proto");
+  assert.equal(blank.get("Vary"), "X-Forwarded-Proto");
+});
+
+test("B2: addVary APPENDS — it never clobbers an existing value", () => {
+  // ⚠️ The regression this guards: `headers.set("Vary", "X-Forwarded-Proto")`
+  // DROPS a Vary already on the response. The session layer adds
+  // `Vary: Cookie`, so assignment would break session caching.
+  const h = vary("Cookie");
+  addVary(h, "X-Forwarded-Proto");
+  assert.equal(h.get("Vary"), "Cookie, X-Forwarded-Proto");
+
+  const multi = vary("Cookie, Accept-Encoding");
+  addVary(multi, "X-Forwarded-Proto");
+  assert.equal(multi.get("Vary"), "Cookie, Accept-Encoding, X-Forwarded-Proto");
+});
+
+test("B2: addVary is idempotent and case-insensitive", () => {
+  const h = vary("X-Forwarded-Proto");
+  addVary(h, "X-Forwarded-Proto");
+  addVary(h, "X-Forwarded-Proto");
+  assert.equal(h.get("Vary"), "X-Forwarded-Proto");
+
+  // Field names are case-insensitive, so a differently-cased existing token
+  // must not be duplicated.
+  const cased = vary("x-forwarded-proto");
+  addVary(cased, "X-Forwarded-Proto");
+  assert.equal(cased.get("Vary"), "x-forwarded-proto");
+
+  const withCookie = vary("Cookie, x-forwarded-proto");
+  addVary(withCookie, "X-Forwarded-Proto");
+  assert.equal(withCookie.get("Vary"), "Cookie, x-forwarded-proto");
+});
+
+test("B2: addVary leaves `Vary: *` alone — it already covers everything", () => {
+  const h = vary("*");
+  addVary(h, "X-Forwarded-Proto");
+  assert.equal(h.get("Vary"), "*");
 });
