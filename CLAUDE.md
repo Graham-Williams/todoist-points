@@ -82,6 +82,77 @@ The `/review` page has a second section, **"Upcoming"**, listing **uncompleted**
 
 **Sync precedence (manual override > label points), in `src/app/api/sync/route.ts`:** for each not-yet-processed completion, the loop checks `task_point_overrides` by `task.id` **before** the label-max computation. If an override exists it awards **exactly** that value (ledger row described `"<content> (pre-assigned)"`, `source_id` = completion id as usual), **bypasses `pending_review` even for a no-label task**, and **deletes the override row within the same transaction** (lifecycle: an override is one-shot — it fires once, then the row is stale because that id won't be an active task again, so it is removed). If no override, the existing label-max / pending-review logic runs unchanged. **Idempotency preserved:** the `alreadyProcessed` guard runs FIRST, so re-syncing a stale window never re-awards or re-deletes; `markProcessed` still runs for every task.
 
+
+### CI (`.github/workflows/ci.yml`)
+
+Runs on every pull request (the `pull_request` trigger is deliberately
+unfiltered, so a stacked PR based on another branch still gets CI) and on
+pushes to `main`. One `test` job:
+Node 24 (matching the Dockerfile), `npm ci`, then `npm test` (71 node:test
+cases over `src/**/*.test.ts`) and `npm run build`. The build step is load-
+bearing: `npm test` never type-checks, so a dependency bump that breaks a type
+or the Next build would pass tests and still be broken.
+Actions are pinned by commit SHA, not by tag — a tag can be re-pointed at
+different code. Dependabot's `github-actions` ecosystem keeps the pins fresh;
+refresh one by hand with
+`gh api repos/<owner>/<action>/git/ref/tags/<tag> --jq .object.sha`.
+Every job carries `timeout-minutes` (a job with no timeout burns a runner for
+six hours when it stalls — km-tracker issue #84 was filed for exactly that).
+
+**There is deliberately NO lint step** — `npm run lint` is broken (issue #20:
+no ESLint config, so `next lint` drops into an interactive prompt and hangs
+forever in CI). Adding it would stall the job and, because auto-merge depends
+on that job, would silently stop every Dependabot PR rather than merging it.
+Verify with `npm run build` + `npm test` until #20 lands.
+
+### Dependabot auto-merge — what merges itself, what stops for Graham
+
+`ci.yml` has a `dependabot-auto-merge` job. **Merges itself**, with no review,
+only when ALL of these hold:
+
+1. The PR author is `dependabot[bot]`, and `dependabot/fetch-metadata` confirms
+   the head commit was authored by Dependabot **and carries a verified
+   signature**. Nobody can hand-craft a PR into this path.
+2. **Every other job in the same workflow run succeeded** — that is literally
+   the `needs:` list, which names every sibling job.
+3. The update is **semver-minor**, **semver-patch**, or a **Docker digest
+   refresh** (same image tag, rebuilt digest).
+
+**Always stops for Graham:**
+
+- Any **major** version bump — *including a security update*. A security fix
+  that crosses a major still waits for him.
+- Any PR where no semver level could be derived and it is not a digest refresh.
+  An unknown update type is an absence of signal, never a pass.
+- Anything whose tests failed, errored, or did not run. **A run with no checks
+  can never merge**, because the merge step is unreachable unless the jobs it
+  needs actually reported success.
+
+**The gate is `needs:`, not branch protection — do not "simplify" it to
+`gh pr merge --auto`.** GitHub's native auto-merge only waits for checks that
+branch protection marks as *required*, and none of these repos define required
+status checks (baby-pool is private, where the plan offers no branch protection
+or rulesets at all). On such a repo `--auto` silently degrades to "merge now",
+which would merge a PR whose tests never ran. Depending on the sibling jobs
+behaves identically on every repo, protected or not. For the same reason
+`allow_auto_merge` is deliberately left **off** — the design does not use it.
+
+The trigger is `pull_request`, **not** `pull_request_target`. The auto-merge
+job checks out nothing and runs no PR code; the only job that runs repository
+code is `test`, which holds a read-only token. A `pull_request` run from a fork
+gets a read-only token regardless of the `permissions:` block, so the write
+scopes are unreachable from a fork.
+
+Each run writes its decision and reasoning to the job summary, so the reason a
+particular PR did or did not merge is always on the run page.
+
+**Known false negative (safe):** for a bounded requirement range —
+`Update X requirement from <4.0,>=3.0 to >=3.1.3,<4.0` — `fetch-metadata`'s
+regex reads the bounds as the versions and reports **semver-major**, so these
+stop for Graham even though they are minor floor bumps. That is the fail-closed
+direction, and it is left alone on purpose: overriding a "major" verdict with
+home-grown parsing would turn a safe stop into a possible unsafe merge.
+
 ## Deployment / self-hosting
 
 Production runs in **Docker** on Graham's Ubuntu home server (Tailscale SSH `graham@100.101.1.28`, app dir `~/todoist-points`), reachable ONLY at **https://todoist-points.graham-williams.com** through the existing Cloudflare Tunnel + Cloudflare Access (one-time PIN). Full runbook: **`DEPLOY.md`**. Key facts:
