@@ -1,0 +1,26 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # ~20 direct deps between the app and the build tooling. Batch the safe
+      # bumps into one PR; majors still get their own PR so each breaking
+      # change (Next, React, better-sqlite3) is reviewed on its own.
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      # Node ships even majors as LTS and odd majors as Current: 24 is LTS, 25
+      # is not. A major bump is therefore either a non-LTS line or the next LTS
+      # migration — never something to take automatically. The image is pinned
+      # by digest, so digest refreshes of node:24 (the security rebuilds) still
+      # arrive as PRs.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
