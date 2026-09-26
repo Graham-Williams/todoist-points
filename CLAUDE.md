@@ -85,7 +85,9 @@ The `/review` page has a second section, **"Upcoming"**, listing **uncompleted**
 
 ### CI (`.github/workflows/ci.yml`)
 
-Runs on every PR to `main` and on pushes to `main`. One `test` job:
+Runs on every pull request (the `pull_request` trigger is deliberately
+unfiltered, so a stacked PR based on another branch still gets CI) and on
+pushes to `main`. One `test` job:
 Node 24 (matching the Dockerfile), `npm ci`, then `npm test` (71 node:test
 cases over `src/**/*.test.ts`) and `npm run build`. The build step is load-
 bearing: `npm test` never type-checks, so a dependency bump that breaks a type
