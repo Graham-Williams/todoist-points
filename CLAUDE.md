@@ -28,7 +28,7 @@ First-time setup:
 Commands:
 - Dev server: `npm run dev` → http://localhost:3000
 - Production build: `npm run build` — note the config uses `output: "standalone"`, so serve the build with `node .next/standalone/server.js` (`next start` doesn't support standalone output); in production it runs in Docker (see Deployment section)
-- Lint: `npm run lint`
+- Lint: none — `npm run lint` is broken and hangs on an interactive prompt (issue #20); never run it. Verify with `npm test` + `npm run build`.
 
 The SQLite DB is created automatically at `./data/todoist-points.db` on first run (schema self-initializes). Both `.env` and `data/` are gitignored — never commit them.
 
