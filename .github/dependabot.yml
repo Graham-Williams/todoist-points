@@ -7,19 +7,48 @@ updates:
     open-pull-requests-limit: 5
     groups:
       # ~20 direct deps between the app and the build tooling. Batch the safe
-      # bumps into one PR; majors still get their own PR so each breaking
-      # change (Next, React, better-sqlite3) is reviewed on its own.
+      # bumps into one boring PR a week. Majors are ignored below, so this group
+      # is the whole of the scheduled stream.
       minor-and-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+    ignore:
+      # ---- Scheduled updates are minor + patch only ------------------------
+      # An auto-PR should be something that can be read and merged in a minute.
+      # A major bump is a migration, not a chore, so majors are taken
+      # deliberately and never on a weekly timer. (Concretely: Next 15 -> 16,
+      # Tailwind 3 -> 4, TypeScript 5 -> 7 and better-sqlite3 11 -> 13 are each
+      # a piece of work with its own testing, not a dependency chore.)
+      #
+      # This costs nothing in security, which is the load-bearing detail here.
+      # From GitHub's docs: "There is no interaction between the settings
+      # specified in the dependabot.yml file and Dependabot security alerts."
+      # `ignore` suppresses only *scheduled version updates*. Dependabot
+      # *security* updates bypass this file entirely, so when the only fix for
+      # an advisory is a major bump, that PR still arrives - on its own and
+      # unbatched, which is exactly how a security fix should show up. This repo
+      # has already proved it: the open `postcss`+`next` security PR takes Next
+      # to 16 despite the rule below, because it is a security update.
+      # Dependabot alerts + security updates are enabled on this repo, and that
+      # is what makes the above true. Do not delete this rule to "unblock" a
+      # security fix: it has never blocked one.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
+    # Deliberately ungrouped: there is one base image, and its digest refreshes
+    # are the security rebuilds - they should arrive as their own obvious PR
+    # rather than folded into a batch.
     ignore:
+      # Same floor as npm above: majors are deliberate, and security updates
+      # bypass this file, so an advisory-driven major still opens its own PR.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
       # Node ships even majors as LTS and odd majors as Current: 24 is LTS, 25
       # is not. A major bump is therefore either a non-LTS line or the next LTS
-      # migration — never something to take automatically. The image is pinned
+      # migration - never something to take automatically. The image is pinned
       # by digest, so digest refreshes of node:24 (the security rebuilds) still
       # arrive as PRs.
       - dependency-name: node
