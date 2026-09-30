@@ -41,11 +41,12 @@ jobs:
       # still be broken. Auto-merge depends on this job, so it must catch that.
       - name: Build
         run: npm run build
-      # DELIBERATELY NO LINT STEP. `npm run lint` is broken (issue #20): there
-      # is no ESLint config, so `next lint` drops into an interactive prompt
-      # and hangs forever in CI. Adding it would stall this job — and, because
-      # auto-merge depends on it, silently stop every Dependabot PR instead of
-      # merging it. Re-add a lint step only once #20 is fixed.
+      # DELIBERATELY NO LINT STEP. There is no ESLint config and no `lint`
+      # script (issue #20; Next.js 16 removed `next lint`, which used to drop
+      # into an interactive prompt and hang forever in CI). A step that can
+      # stall this job would — because auto-merge depends on it — silently
+      # stop every Dependabot PR instead of merging it. Add a lint step only
+      # once #20 is fixed.
 
   # ---------------------------------------------------------------------------
   # Dependabot auto-merge.

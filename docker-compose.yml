@@ -16,7 +16,7 @@ services:
       DB_PATH: /data/todoist-points.db
       # Read from a box-local, gitignored .env next to this file.
       TODOIST_API_TOKEN: ${TODOIST_API_TOKEN:?TODOIST_API_TOKEN must be set}
-      # App-level shared-password sign-in gate (src/middleware.ts). Set both to
+      # App-level shared-password sign-in gate (src/proxy.ts). Set both to
       # turn the gate ON (the post-Cloudflare-Access model): APP_PASSWORD is the
       # shared secret typed at /login, SESSION_SECRET signs the session cookie.
       # Leave BOTH empty to keep the gate OFF (e.g. while still behind CF Access).
@@ -24,7 +24,7 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:-}
       # In-app Cloudflare Access JWT verification (LEGACY defense-in-depth). The
       # AUD comes from the box-local .env; the team domain is fixed. When
-      # APP_PASSWORD is set the middleware skips this block (password gate wins),
+      # APP_PASSWORD is set the proxy skips this block (password gate wins),
       # so at cutover just set APP_PASSWORD/SESSION_SECRET and clear CF_ACCESS_AUD.
       # Optional (:-) so cutover doesn't require the CF var to be present.
       CF_ACCESS_TEAM_DOMAIN: blue-dream-0427.cloudflareaccess.com

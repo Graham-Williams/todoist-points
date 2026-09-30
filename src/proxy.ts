@@ -47,7 +47,8 @@ import {
 //
 // With none of these env vars set (local dev), the middleware is a no-op.
 //
-// Runs on the Edge runtime: no Node crypto, no npm deps — WebCrypto only.
+// Next.js 16 `proxy` convention (renamed from `middleware`). Proxy always runs
+// on the Node.js runtime; the code sticks to WebCrypto and has no npm deps.
 
 const JWKS_TTL_MS = 60 * 60 * 1000; // 1 hour
 
@@ -173,7 +174,7 @@ function isPublicPath(pathname: string): boolean {
 // the 401 for /api/*, the 403s). A `next.config.mjs` `headers()` entry would
 // NOT cover those: custom headers are applied by the routing layer, which a
 // response returned from middleware never reaches.
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const res = await handle(req);
   res.headers.set(HSTS_HEADER, HSTS_VALUE);
   // Vary on EVERY response, not just the 307. The redirect decision keys

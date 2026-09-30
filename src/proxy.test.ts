@@ -1,14 +1,14 @@
-// Integration tests for the Next.js middleware: origin HTTPS enforcement
+// Integration tests for the Next.js proxy (formerly middleware): origin HTTPS enforcement
 // (issue #21) and the ordering guarantees around the existing gates.
 //
 // Run with: npm test  (node --test, native TS type-stripping; no runner dep).
 //
-// The middleware is production code that imports `next/server` and the `@/`
+// The proxy is production code that imports `next/server` and the `@/`
 // path alias — neither of which plain Node resolves — so this file registers
 // module-resolution hooks (Node >= 22.15 / 24) before dynamically importing
 // it. The hooks are process-local and `node --test` runs each test file in its
 // own process, so nothing else is affected. This is worth the small amount of
-// machinery: it tests the REAL middleware, including the order in which the
+// machinery: it tests the REAL proxy, including the order in which the
 // HTTPS redirect, the CSRF/origin pin and the password gate run.
 //
 // ⚠️ What this harness CANNOT reproduce: the built standalone server
@@ -38,7 +38,7 @@ registerHooks({
   },
 });
 
-const { middleware } = await import("./middleware.ts");
+const { proxy } = await import("./proxy.ts");
 const { NextRequest } = await import("next/server.js");
 
 const HOST = "todoist-points.graham-williams.com";
@@ -80,7 +80,7 @@ const HTTPS_VISITOR = {
 test("a plain-http visitor → 307 to https on the pinned host", async () => {
   reset();
   process.env.APP_HOST = HOST;
-  const res = await middleware(request("/review", HTTP_VISITOR));
+  const res = await proxy(request("/review", HTTP_VISITOR));
   assert.equal(res.status, 307);
   assert.equal(res.headers.get("location"), `https://${HOST}/review`);
 });
@@ -90,7 +90,7 @@ test("the redirect is uncacheable and declares what it varies on", async () => {
   // extensions), so a scheme redirect issued in error would outlive its fix.
   reset();
   process.env.APP_HOST = HOST;
-  const res = await middleware(request("/review", HTTP_VISITOR));
+  const res = await proxy(request("/review", HTTP_VISITOR));
   assert.equal(res.status, 307);
   assert.equal(res.headers.get("cache-control"), "no-store");
   assert.equal(res.headers.get("vary"), "X-Forwarded-Proto");
@@ -100,7 +100,7 @@ test("the redirect preserves the method (307, not 301/302)", async () => {
   // 301/302 let a client downgrade a POST to a bodiless GET; 307 must not.
   reset();
   process.env.APP_HOST = HOST;
-  const res = await middleware(request("/api/sync", HTTP_VISITOR, { method: "POST" }));
+  const res = await proxy(request("/api/sync", HTTP_VISITOR, { method: "POST" }));
   assert.equal(res.status, 307);
   assert.equal(res.headers.get("location"), `https://${HOST}/api/sync`);
 });
@@ -108,7 +108,7 @@ test("the redirect preserves the method (307, not 301/302)", async () => {
 test("the redirect preserves query and percent-encoding", async () => {
   reset();
   process.env.APP_HOST = HOST;
-  const res = await middleware(
+  const res = await proxy(
     request("/review/a%20b?next=%2Fx%20y&n=1%2B2", HTTP_VISITOR)
   );
   assert.equal(res.status, 307);
@@ -129,14 +129,14 @@ test("the redirect never reflects the request Host and never leaks 0.0.0.0", asy
   process.env.APP_HOST = HOST;
 
   // A crafted Host doesn't match APP_HOST, so it doesn't even redirect...
-  const crafted = await middleware(
+  const crafted = await proxy(
     request("/", { ...HTTP_VISITOR, host: "evil.example" })
   );
   assert.notEqual(crafted.status, 307);
   assert.equal(crafted.headers.get("location"), null);
 
   // ...and a genuine request's target is APP_HOST, not req.url's 0.0.0.0:3000.
-  const location = (await middleware(request("/", HTTP_VISITOR))).headers.get("location")!;
+  const location = (await proxy(request("/", HTTP_VISITOR))).headers.get("location")!;
   assert.equal(location, `https://${HOST}/`);
   assert.ok(!location.includes("evil.example"));
   assert.ok(!location.includes("0.0.0.0"));
@@ -150,7 +150,7 @@ test("NO Cloudflare marker → served normally, even for the public host", async
   // 307'd to the exact URL it already asked for, forever. It must fail OPEN.
   reset();
   process.env.APP_HOST = HOST;
-  const res = await middleware(
+  const res = await proxy(
     request("/review", { "x-forwarded-proto": "http", host: HOST })
   );
   assert.notEqual(res.status, 307);
@@ -162,7 +162,7 @@ test("CF-Visitor alone is enough of a marker, and beats X-Forwarded-Proto", asyn
   process.env.APP_HOST = HOST;
 
   // CF says the visitor used http → redirect, even though XFP says https.
-  const redirected = await middleware(
+  const redirected = await proxy(
     request("/review", {
       host: HOST,
       "x-forwarded-proto": "https",
@@ -173,7 +173,7 @@ test("CF-Visitor alone is enough of a marker, and beats X-Forwarded-Proto", asyn
   assert.equal(redirected.headers.get("location"), `https://${HOST}/review`);
 
   // CF says https → served, even though XFP says http (the synthesized value).
-  const served = await middleware(
+  const served = await proxy(
     request("/api/health", {
       host: HOST,
       "x-forwarded-proto": "http",
@@ -194,7 +194,7 @@ test("an in-network probe is served normally even with a synthesized proto heade
   process.env.APP_HOST = HOST;
   process.env.APP_PASSWORD = "shared-password";
   process.env.SESSION_SECRET = "test-secret";
-  const res = await middleware(
+  const res = await proxy(
     request("/api/health", { "x-forwarded-proto": "http", host: "localhost:3000" })
   );
   assert.equal(res.status, 200);
@@ -204,7 +204,7 @@ test("an in-network probe is served normally even with a synthesized proto heade
 test("X-Forwarded-Proto: https is served normally", async () => {
   reset();
   process.env.APP_HOST = HOST;
-  const res = await middleware(request("/", HTTPS_VISITOR));
+  const res = await proxy(request("/", HTTPS_VISITOR));
   assert.equal(res.status, 200);
   assert.equal(res.headers.get("location"), null);
 });
@@ -218,14 +218,14 @@ test("no X-Forwarded-Proto header at all: /api/health is served normally", async
   process.env.APP_HOST = HOST;
   process.env.APP_PASSWORD = "shared-password";
   process.env.SESSION_SECRET = "test-secret";
-  const res = await middleware(request("/api/health"));
+  const res = await proxy(request("/api/health"));
   assert.equal(res.status, 200);
   assert.equal(res.headers.get("location"), null);
 });
 
 test("no redirect when APP_HOST is unset (local dev / CI)", async () => {
   reset();
-  const res = await middleware(request("/", HTTP_VISITOR));
+  const res = await proxy(request("/", HTTP_VISITOR));
   assert.equal(res.status, 200);
   assert.equal(res.headers.get("location"), null);
 });
@@ -237,7 +237,7 @@ test("HTTPS enforcement runs BEFORE the password gate", async () => {
   process.env.APP_HOST = HOST;
   process.env.APP_PASSWORD = "shared-password";
   process.env.SESSION_SECRET = "test-secret";
-  const res = await middleware(request("/review", HTTP_VISITOR));
+  const res = await proxy(request("/review", HTTP_VISITOR));
   assert.equal(res.status, 307);
   assert.equal(res.headers.get("location"), `https://${HOST}/review`);
 });
@@ -248,7 +248,7 @@ test("HTTPS enforcement runs BEFORE the CSRF/origin pin", async () => {
   // password gate's /login redirect is also a 307, so this asserts Location.
   reset();
   process.env.APP_HOST = HOST;
-  const res = await middleware(
+  const res = await proxy(
     request("/api/sync", HTTP_VISITOR, { method: "POST" })
   );
   assert.equal(res.status, 307);
@@ -260,7 +260,7 @@ test("the password gate still redirects an unauthenticated visitor to /login", a
   process.env.APP_HOST = HOST;
   process.env.APP_PASSWORD = "shared-password";
   process.env.SESSION_SECRET = "test-secret";
-  const res = await middleware(request("/review?a=1", HTTPS_VISITOR));
+  const res = await proxy(request("/review?a=1", HTTPS_VISITOR));
   assert.equal(res.status, 307);
   assert.ok(res.headers.get("location")!.includes("/login?next=%2Freview%3Fa%3D1"));
 });
@@ -272,27 +272,27 @@ test("HSTS is on every response path", async () => {
   process.env.SESSION_SECRET = "test-secret";
 
   // 1. the https redirect
-  const redirected = await middleware(request("/", HTTP_VISITOR));
+  const redirected = await proxy(request("/", HTTP_VISITOR));
   assert.equal(redirected.status, 307);
   assert.equal(redirected.headers.get("strict-transport-security"), HSTS_VALUE);
 
   // 2. a normal (passed-through) response
-  const passthrough = await middleware(request("/api/health", HTTPS_VISITOR));
+  const passthrough = await proxy(request("/api/health", HTTPS_VISITOR));
   assert.equal(passthrough.status, 200);
   assert.equal(passthrough.headers.get("strict-transport-security"), HSTS_VALUE);
 
   // 3. the middleware's own short-circuit: /login redirect...
-  const login = await middleware(request("/review", HTTPS_VISITOR));
+  const login = await proxy(request("/review", HTTPS_VISITOR));
   assert.equal(login.status, 307);
   assert.equal(login.headers.get("strict-transport-security"), HSTS_VALUE);
 
   // ...4. the 401 for an unauthenticated API call...
-  const unauthorized = await middleware(request("/api/sync", HTTPS_VISITOR));
+  const unauthorized = await proxy(request("/api/sync", HTTPS_VISITOR));
   assert.equal(unauthorized.status, 401);
   assert.equal(unauthorized.headers.get("strict-transport-security"), HSTS_VALUE);
 
   // ...and 5. the 403 from the CSRF/origin pin.
-  const forbidden = await middleware(
+  const forbidden = await proxy(
     request("/api/sync", { ...HTTPS_VISITOR, host: "evil.example" }, { method: "POST" })
   );
   assert.equal(forbidden.status, 403);
@@ -301,7 +301,7 @@ test("HSTS is on every response path", async () => {
 
 test("HSTS value is exactly one year, no includeSubDomains/preload", async () => {
   reset();
-  const res = await middleware(request("/"));
+  const res = await proxy(request("/"));
   assert.equal(res.headers.get("strict-transport-security"), "max-age=31536000");
 });
 
@@ -331,27 +331,27 @@ test("B2: Vary: X-Forwarded-Proto is on every response path, not just the 307", 
 
   // Mirrors the HSTS-on-every-path test above, one for one.
   // 1. the https redirect
-  const redirected = await middleware(request("/", HTTP_VISITOR));
+  const redirected = await proxy(request("/", HTTP_VISITOR));
   assert.equal(redirected.status, 307);
   assert.ok(varyTokens(redirected).has("x-forwarded-proto"));
 
   // 2. a normal (passed-through) 200
-  const passthrough = await middleware(request("/api/health", HTTPS_VISITOR));
+  const passthrough = await proxy(request("/api/health", HTTPS_VISITOR));
   assert.equal(passthrough.status, 200);
   assert.ok(varyTokens(passthrough).has("x-forwarded-proto"));
 
   // 3. the middleware's own /login short-circuit
-  const login = await middleware(request("/review", HTTPS_VISITOR));
+  const login = await proxy(request("/review", HTTPS_VISITOR));
   assert.equal(login.status, 307);
   assert.ok(varyTokens(login).has("x-forwarded-proto"));
 
   // 4. the 401 for an unauthenticated API call
-  const unauthorized = await middleware(request("/api/sync", HTTPS_VISITOR));
+  const unauthorized = await proxy(request("/api/sync", HTTPS_VISITOR));
   assert.equal(unauthorized.status, 401);
   assert.ok(varyTokens(unauthorized).has("x-forwarded-proto"));
 
   // 5. the 403 from the CSRF/origin pin
-  const forbidden = await middleware(
+  const forbidden = await proxy(
     request("/api/sync", { ...HTTPS_VISITOR, host: "evil.example" }, { method: "POST" })
   );
   assert.equal(forbidden.status, 403);
@@ -360,7 +360,7 @@ test("B2: Vary: X-Forwarded-Proto is on every response path, not just the 307", 
   // ...and with no APP_HOST at all (the fail-open path), which is the shape a
   // dotless/bare-IP APP_HOST now takes after the B1 fix.
   reset();
-  const failOpen = await middleware(request("/api/health", HTTP_VISITOR));
+  const failOpen = await proxy(request("/api/health", HTTP_VISITOR));
   assert.ok(varyTokens(failOpen).has("x-forwarded-proto"));
 });
 
@@ -369,7 +369,7 @@ test("B2: the 307's own Vary is not doubled (addVary is idempotent)", async () =
   // middleware then calls addVary on the same response. Exactly one token.
   reset();
   process.env.APP_HOST = HOST;
-  const res = await middleware(request("/review", HTTP_VISITOR));
+  const res = await proxy(request("/review", HTTP_VISITOR));
   assert.equal(res.status, 307);
   assert.equal(res.headers.get("vary"), "X-Forwarded-Proto");
 });
@@ -390,4 +390,36 @@ test("B2: an existing Vary on the response survives — it is appended to", asyn
     ),
     new Set(["cookie", "x-forwarded-proto"])
   );
+});
+
+// The password gate's allow-list and session check, exercised through the
+// proxy entry point (the Next.js 16 `proxy` convention replaced `middleware`).
+test("password gate: public paths pass, a signed session passes, a forged one does not", async () => {
+  reset();
+  process.env.APP_PASSWORD = "shared-password";
+  process.env.SESSION_SECRET = "test-secret";
+  const { createSessionToken, SESSION_COOKIE } = await import("./lib/auth.ts");
+
+  // Public paths are served without a session (NextResponse.next() → 200).
+  for (const path of ["/login", "/logout", "/api/login", "/api/health", "/_next/static/x.js", "/apple-icon", "/icon.svg"]) {
+    const res = await proxy(request(path));
+    assert.equal(res.status, 200, `${path} should be public`);
+    assert.equal(res.headers.get("x-middleware-next"), "1", `${path} should pass through`);
+  }
+
+  // A valid signed session opens both pages and the API.
+  const token = await createSessionToken("test-secret");
+  for (const path of ["/", "/review", "/api/sync"]) {
+    const res = await proxy(request(path, { cookie: `${SESSION_COOKIE}=${token}` }));
+    assert.equal(res.status, 200, `${path} should pass with a session`);
+    assert.equal(res.headers.get("x-middleware-next"), "1");
+  }
+
+  // A cookie signed with another secret is rejected like no cookie at all.
+  const forged = await createSessionToken("some-other-secret");
+  const page = await proxy(request("/review", { cookie: `${SESSION_COOKIE}=${forged}` }));
+  assert.equal(page.status, 307);
+  assert.ok(page.headers.get("location")!.includes("/login?next=%2Freview"));
+  const api = await proxy(request("/api/sync", { cookie: `${SESSION_COOKIE}=${forged}` }));
+  assert.equal(api.status, 401);
 });

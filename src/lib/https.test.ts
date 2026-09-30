@@ -354,7 +354,7 @@ test("control characters in the path can't inject a header", () => {
 // content that redirect decision gates are equally scheme-dependent, so a
 // shared cache could store an https-served 200 and later hand it to a
 // plain-http request. `addVary` is the append primitive that fixes it; the
-// response-path coverage lives in src/middleware.test.ts.
+// response-path coverage lives in src/proxy.test.ts.
 
 function vary(value: string | null): Headers {
   const h = new Headers();

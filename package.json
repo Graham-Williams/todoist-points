@@ -6,7 +6,6 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
     "test": "node --test 'src/**/*.test.ts'"
   },
   "dependencies": {
@@ -14,7 +13,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "better-sqlite3": "^11.8.1",
-    "next": "^15.5.26",
+    "next": "^16.3.7",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },

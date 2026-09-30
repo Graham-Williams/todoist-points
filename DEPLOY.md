@@ -5,7 +5,7 @@ reachable **only** through the existing Cloudflare Tunnel at
 **https://todoist-points.graham-williams.com**.
 
 **Sign-in — app-level shared password (the active model).** The app gates
-itself in `src/middleware.ts`: set **`APP_PASSWORD`** (shared secret) +
+itself in `src/proxy.ts`: set **`APP_PASSWORD`** (shared secret) +
 **`SESSION_SECRET`** (cookie-signing key) and every request without a valid
 signed session cookie is redirected to `/login`. One password → a ~30-day
 session, so re-auth is rare. This **replaces** the Cloudflare-Access emailed-PIN
@@ -141,7 +141,7 @@ The DB and `.env` live outside the image (volume + env file), so rebuilds are sa
   the catch-all 404), and create a proxied CNAME to
   `<tunnel-id>.cfargotunnel.com`. See the personal-assistant CLAUDE.md
   (Cloudflare section) for token/IDs/procedure.
-- **App-level password gate (active):** `src/middleware.ts` + `src/lib/auth.ts`.
+- **App-level password gate (active):** `src/proxy.ts` + `src/lib/auth.ts`.
   When `APP_PASSWORD` is set, unauthenticated requests are redirected to
   `/login`; a correct password sets a `SESSION_SECRET`-signed, HttpOnly/Secure/
   SameSite=Lax cookie (~30-day). Failed logins are rate-limited (10/15 min per
@@ -150,7 +150,7 @@ The DB and `.env` live outside the image (volume + env file), so rebuilds are sa
 - **Legacy Cloudflare Access (one-time PIN) + in-app JWT verification:** kept in
   code but **skipped when `APP_PASSWORD` is set**. While configured (CF gate on,
   password gate off) the compose file's `CF_ACCESS_TEAM_DOMAIN` + `CF_ACCESS_AUD`
-  make `src/middleware.ts` verify the `Cf-Access-Jwt-Assertion` JWT on every
+  make `src/proxy.ts` verify the `Cf-Access-Jwt-Assertion` JWT on every
   request; requests without a valid JWT get 403.
 
 ## Cutover: Cloudflare Access → app password
