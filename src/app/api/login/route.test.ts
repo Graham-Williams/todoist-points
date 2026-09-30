@@ -6,7 +6,7 @@
 // the way we expect. The four sibling Flask apps assert the live header, so
 // this does too — one test, no new dependency.
 //
-// Module-resolution hooks (see src/middleware.test.ts for the rationale) let
+// Module-resolution hooks (see src/proxy.test.ts for the rationale) let
 // plain Node import a file that uses `next/server` and the `@/` alias.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -48,7 +48,8 @@ test("POST /api/login sets a Secure, HttpOnly, SameSite=Lax session cookie in pr
   const prevEnv = process.env.NODE_ENV;
   process.env.APP_PASSWORD = PASSWORD;
   process.env.SESSION_SECRET = "test-session-secret";
-  process.env.NODE_ENV = "production";
+  // NODE_ENV is typed read-only by Next; the build type-checks this file.
+  (process.env as Record<string, string | undefined>).NODE_ENV = "production";
   try {
     const res = await POST(loginRequest(PASSWORD));
 
@@ -69,7 +70,7 @@ test("POST /api/login sets a Secure, HttpOnly, SameSite=Lax session cookie in pr
     assert.ok(!setCookie!.includes(PASSWORD), "the password must never reach the cookie");
     assert.match(setCookie!, /tp_session=v1\.\d+\./);
   } finally {
-    process.env.NODE_ENV = prevEnv;
+    (process.env as Record<string, string | undefined>).NODE_ENV = prevEnv;
     delete process.env.APP_PASSWORD;
     delete process.env.SESSION_SECRET;
   }

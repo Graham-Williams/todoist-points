@@ -1,9 +1,9 @@
 // Shared-password auth primitives for the app-level sign-in gate.
 //
-// IMPORTANT: this module runs in BOTH the Edge runtime (Next.js middleware)
-// and the Node runtime (the /api/login route handler). It therefore uses
-// ONLY Web-standard crypto (`crypto.subtle`, `btoa`/`atob`, `TextEncoder`) —
-// no Node built-ins, no npm deps — so it is safe on the Edge.
+// IMPORTANT: this module is shared by the Next.js proxy (src/proxy.ts) and the
+// /api/login route handler. It uses ONLY Web-standard crypto (`crypto.subtle`,
+// `btoa`/`atob`, `TextEncoder`) — no Node built-ins, no npm deps — so it runs
+// unchanged in any runtime.
 //
 // Security model:
 //   - APP_PASSWORD is a shared secret; setting it turns the gate ON.
