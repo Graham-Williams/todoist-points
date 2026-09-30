@@ -24,7 +24,7 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:-}
       # In-app Cloudflare Access JWT verification (LEGACY defense-in-depth). The
       # AUD comes from the box-local .env; the team domain is fixed. When
-      # APP_PASSWORD is set the middleware skips this block (password gate wins),
+      # APP_PASSWORD is set the proxy skips this block (password gate wins),
       # so at cutover just set APP_PASSWORD/SESSION_SECRET and clear CF_ACCESS_AUD.
       # Optional (:-) so cutover doesn't require the CF var to be present.
       CF_ACCESS_TEAM_DOMAIN: blue-dream-0427.cloudflareaccess.com
