@@ -211,7 +211,7 @@ rclone OAuth token is stored only in `~/.config/rclone/rclone.conf`, and
 > The home server already runs km-tracker's identical backup for its own DB, so
 > rclone + a `gdrive` remote are likely **already configured** on the box. If so,
 > skip steps 1–2 and reuse the same `gdrive` remote — just point this app at its
-> own folder (`gdrive:todoist-points-backups`, auto-created on first copy).
+> own folder (`gdrive:Hopper/todoist-points-backups`, auto-created on first copy).
 
 ### 1. Install rclone (skip if km-tracker already set it up)
 
@@ -245,14 +245,15 @@ rclone lsd gdrive:
 chmod 600 ~/.config/rclone/rclone.conf   # holds the OAuth token
 ```
 
-The destination folder (`todoist-points-backups`) is auto-created on the first copy.
+The destination folder (`Hopper/todoist-points-backups`; `Hopper/` holds every
+script-written Drive folder) is auto-created on the first copy.
 
 ### 3. Configure the backup
 
 ```bash
 cd ~/todoist-points
 cp .env.backup.example .env.backup
-# Confirm RCLONE_DEST=gdrive:todoist-points-backups (default is already this)
+# Confirm RCLONE_DEST=gdrive:Hopper/todoist-points-backups (default is already this)
 chmod 600 .env.backup   # the script refuses to source it if group/other-writable
 ```
 
@@ -283,7 +284,7 @@ systemctl list-timers | grep todoist-points-backup   # scheduled?
 sudo systemctl start todoist-points-backup.service    # run once now
 journalctl -u todoist-points-backup.service --no-pager -n 50
 ls -1 data/backups/                                    # a local snapshot appears
-rclone lsf gdrive:todoist-points-backups               # and shows up on Drive
+rclone lsf gdrive:Hopper/todoist-points-backups        # and shows up on Drive
 ```
 
 To **restore**: stop the app (`docker compose down`), copy a snapshot back over

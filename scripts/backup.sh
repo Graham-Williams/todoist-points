@@ -95,7 +95,7 @@ fi
 DB_PATH="${DB_PATH:-${HOME}/todoist-points/data/todoist-points.db}"
 LOCAL_BACKUP_DIR="${LOCAL_BACKUP_DIR:-${HOME}/todoist-points/data/backups}"
 STATE_DIR="${STATE_DIR:-${HOME}/todoist-points/data/.backup-state}"
-RCLONE_DEST="${RCLONE_DEST:-}"                       # e.g. gdrive:todoist-points-backups
+RCLONE_DEST="${RCLONE_DEST:-}"                       # e.g. gdrive:Hopper/todoist-points-backups
 LOCAL_RETENTION="${LOCAL_RETENTION:-100}"            # keep newest N local snapshots
 DRIVE_RETENTION="${DRIVE_RETENTION:-50}"             # keep newest N recent on Drive
 DAILY_RETENTION="${DAILY_RETENTION:-30}"             # keep newest N in Drive daily/ tier
