@@ -30,3 +30,11 @@ test("parseDescription: optional, trimmed, blank -> null, max 500", async () => 
   assert.equal(parseDescription("x".repeat(501)), undefined);
   for (const bad of [5, true, [], {}]) assert.equal(parseDescription(bad), undefined);
 });
+
+test("decodeRouteParam decodes once and tolerates bad escapes", async () => {
+  const { decodeRouteParam } = await import("./validate.ts");
+  assert.equal(decodeRouteParam("recurring%3A123"), "recurring:123");
+  assert.equal(decodeRouteParam("recurring:123"), "recurring:123");
+  assert.equal(decodeRouteParam("abc"), "abc");
+  assert.equal(decodeRouteParam("%E0%A4%A"), "%E0%A4%A");
+});

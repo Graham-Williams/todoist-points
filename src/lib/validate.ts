@@ -89,3 +89,15 @@ export function parseHabitInput(
   }
   return { ok: true, value };
 }
+
+// A string route segment (e.g. a review completion id such as
+// "recurring:<eventId>"). Clients encodeURIComponent it; decode defensively in
+// case the framework hasn't (decoding an already-decoded id of letters, digits
+// and ':' is a no-op). Malformed escapes are left as-is.
+export function decodeRouteParam(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}

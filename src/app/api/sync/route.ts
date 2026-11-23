@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { getCompletedTasks } from "@/lib/todoist";
+import {
+  getCompletedTasks,
+  getRecurringCompletions,
+  type RecurringCompletion,
+} from "@/lib/todoist";
 import { getDb } from "@/lib/db";
 
 // POST: fetch completed tasks since the last sync. For each completion not
@@ -7,6 +11,16 @@ import { getDb } from "@/lib/db";
 // exactly that; otherwise queue it for manual review (Review → Completed).
 // Labels play no part in scoring. Idempotent — re-syncing never re-awards or
 // re-queues.
+//
+// Recurring tasks: their completions are missing from by_completion_date and
+// share one task id, so they come from the activity log instead
+// (getRecurringCompletions), keyed `recurring:<eventId>` — one review-queue row
+// per completion, never pre-assigned. That source keeps its own window
+// (sync_state 'last_recurring_sync'), so if the activity log fails the normal
+// path still syncs and the recurring window is simply retried next time.
+
+const LOOKBACK_DAYS = 90;
+const OVERLAP_HOURS = 6;
 export async function POST() {
   try {
     const db = getDb();
@@ -23,15 +37,41 @@ export async function POST() {
       // Re-scan from a few hours before last sync to catch any stragglers;
       // processed_completions dedupes anyway.
       const from = new Date(lastSyncRow.value);
-      from.setHours(from.getHours() - 6);
+      from.setHours(from.getHours() - OVERLAP_HOURS);
       since = formatTodoistTs(from);
     } else {
       const from = new Date(now);
-      from.setDate(from.getDate() - 90);
+      from.setDate(from.getDate() - LOOKBACK_DAYS);
       since = formatTodoistTs(from);
     }
 
     const completed = await getCompletedTasks(since, until);
+
+    // Recurring completions: own window, from last_recurring_sync (or, the
+    // first time, the same start as the normal path — going forward only),
+    // minus the same overlap, never more than LOOKBACK_DAYS back. A failure
+    // here is logged and skipped: it must not block normal completions.
+    const lastRecurringRow = db
+      .prepare(`SELECT value FROM sync_state WHERE key = 'last_recurring_sync'`)
+      .get() as { value: string } | undefined;
+    let recurringSince: Date;
+    if (lastRecurringRow?.value) {
+      recurringSince = new Date(lastRecurringRow.value);
+      recurringSince.setHours(recurringSince.getHours() - OVERLAP_HOURS);
+    } else {
+      recurringSince = new Date(since); // naive local, same as the normal path
+    }
+    const floor = new Date(now);
+    floor.setDate(floor.getDate() - LOOKBACK_DAYS);
+    if (Number.isNaN(recurringSince.getTime()) || recurringSince < floor) {
+      recurringSince = floor;
+    }
+    let recurring: RecurringCompletion[] | null = null;
+    try {
+      recurring = await getRecurringCompletions(recurringSince, now);
+    } catch (err) {
+      console.error("Recurring completions fetch failed; skipping this run", err);
+    }
 
     const alreadyProcessed = db.prepare(
       `SELECT 1 FROM processed_completions WHERE completion_id = ?`
@@ -57,6 +97,7 @@ export async function POST() {
     );
     let newlyQueued = 0;
     let preassignedAwarded = 0;
+    let recurringQueued = 0;
 
     const tx = db.transaction(() => {
       for (const task of completed) {
@@ -90,10 +131,24 @@ export async function POST() {
         }
         markProcessed.run(task.id);
       }
-      db.prepare(
-        `INSERT INTO sync_state (key, value) VALUES ('last_sync', ?)
+
+      // Recurring completions: one queue row per completion event. Never
+      // pre-assigned (Upcoming hides recurring tasks). Keys can't collide with
+      // the plain task-id keys above.
+      for (const r of recurring ?? []) {
+        const key = `recurring:${r.eventId}`;
+        if (alreadyProcessed.get(key)) continue;
+        recurringQueued += insertPendingReview.run(key, r.content, "[]", r.completedAt).changes;
+        markProcessed.run(key);
+      }
+
+      const setState = db.prepare(
+        `INSERT INTO sync_state (key, value) VALUES (?, ?)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-      ).run(until);
+      );
+      setState.run("last_sync", until);
+      // Only advance the recurring window when it was actually fetched.
+      if (recurring) setState.run("last_recurring_sync", now.toISOString());
     });
     tx();
 
@@ -108,6 +163,8 @@ export async function POST() {
       scanned: completed.length,
       newlyQueued,
       preassignedAwarded,
+      recurringQueued,
+      recurringOk: recurring !== null,
       pendingReview,
     });
   } catch (err) {

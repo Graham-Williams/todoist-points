@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { decodeRouteParam } from "@/lib/validate";
 import { discardPendingReview } from "@/lib/queries";
 
 // POST: discard a queued completion without awarding points. It stays in
@@ -8,7 +9,8 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = await params;
+    // Ids may contain ':' (e.g. "recurring:<eventId>"); the page encodes them.
+    const id = decodeRouteParam((await params).id);
     discardPendingReview(id);
     return NextResponse.json({ ok: true });
   } catch (err) {

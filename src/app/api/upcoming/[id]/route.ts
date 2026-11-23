@@ -5,7 +5,7 @@ import {
   OVERRIDE_POINTS_MAX,
   upsertTaskOverride,
 } from "@/lib/queries";
-import { parseIntInRange } from "@/lib/validate";
+import { decodeRouteParam, parseIntInRange } from "@/lib/validate";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -22,7 +22,7 @@ function validId(id: string): boolean {
 // that id was already processed by sync (its override could never fire).
 export async function PUT(req: Request, { params }: Ctx) {
   try {
-    const { id } = await params;
+    const id = decodeRouteParam((await params).id);
     if (!validId(id)) {
       return NextResponse.json({ error: "Invalid task id" }, { status: 400 });
     }
@@ -62,7 +62,7 @@ export async function PUT(req: Request, { params }: Ctx) {
 // DELETE: clear the points set for an upcoming task (idempotent).
 export async function DELETE(_req: Request, { params }: Ctx) {
   try {
-    const { id } = await params;
+    const id = decodeRouteParam((await params).id);
     if (!validId(id)) {
       return NextResponse.json({ error: "Invalid task id" }, { status: 400 });
     }

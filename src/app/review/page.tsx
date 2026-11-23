@@ -272,7 +272,7 @@ export default function ReviewPage() {
     setBusy((prev) => ({ ...prev, [id]: true }));
     beginAction();
     try {
-      const res = await fetch(`/api/review/${id}/award`, {
+      const res = await fetch(`/api/review/${encodeURIComponent(id)}/award`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ points: n }),
@@ -294,7 +294,7 @@ export default function ReviewPage() {
     setBusy((prev) => ({ ...prev, [id]: true }));
     beginAction();
     try {
-      const res = await fetch(`/api/review/${id}/discard`, { method: "POST" });
+      const res = await fetch(`/api/review/${encodeURIComponent(id)}/discard`, { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to discard");
       setTasks((prev) => prev.filter((t) => t.completion_id !== id));
