@@ -107,6 +107,7 @@ export default function ReviewPage() {
       if (!res.ok) throw new Error(data.error ?? "Failed to assign points");
       setBalance(data.newBalance ?? null);
       setTasks((prev) => prev.filter((t) => t.completion_id !== id));
+      window.dispatchEvent(new CustomEvent("todoist:synced"));
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -122,6 +123,7 @@ export default function ReviewPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to discard");
       setTasks((prev) => prev.filter((t) => t.completion_id !== id));
+      window.dispatchEvent(new CustomEvent("todoist:synced"));
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -129,10 +131,16 @@ export default function ReviewPage() {
     }
   }
 
-  // Don't leave a stale confirm armed if the queue empties some other way.
+  // The armed snapshot, minus anything assigned or discarded since it was
+  // armed, so the confirm never counts (or sends) an item no longer on screen.
+  const armedIds = confirmingAll?.filter((id) =>
+    tasks.some((t) => t.completion_id === id)
+  );
+
+  // Don't leave a stale confirm armed if its items are all gone.
   useEffect(() => {
-    if (tasks.length === 0) setConfirmingAll(null);
-  }, [tasks.length]);
+    if (armedIds?.length === 0) setConfirmingAll(null);
+  }, [armedIds?.length]);
 
   async function discardAll(ids: string[]) {
     setError(null);
@@ -169,13 +177,13 @@ export default function ReviewPage() {
             </span>
           )}
           {tasks.length > 0 &&
-            (confirmingAll ? (
+            (armedIds && armedIds.length > 0 ? (
               <div className="flex items-center gap-2">
                 <span className="whitespace-nowrap text-sm text-slate-300">
-                  Discard all {confirmingAll.length}?
+                  Discard all {armedIds.length}?
                 </span>
                 <button
-                  onClick={() => discardAll(confirmingAll)}
+                  onClick={() => discardAll(armedIds)}
                   disabled={discardingAll}
                   className="shrink-0 whitespace-nowrap rounded-md border border-rose-900 px-3 py-2 text-xs text-rose-400 hover:bg-rose-950 disabled:opacity-40 sm:py-1.5"
                 >
