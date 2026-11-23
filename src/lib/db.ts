@@ -15,7 +15,8 @@ function resolveDbPath(): string {
   return path.join(process.cwd(), "data", "todoist-points.db");
 }
 
-function initSchema(db: Database.Database) {
+// Exported for the migration test (src/lib/db.test.ts).
+export function initSchema(db: Database.Database) {
   db.pragma("journal_mode = WAL");
   db.exec(`
     -- LEGACY, unused since points moved to the Review tab. Kept (never dropped)
@@ -95,21 +96,27 @@ function initSchema(db: Database.Database) {
 
     -- Daily habits (see src/lib/habits.ts). "Remove" sets archived_at (soft
     -- delete) so past checks and their ledger rows keep their history.
+    -- description was added after the first preview shipped: older DBs get it
+    -- from addColumnIfMissing below, so keep it LAST here to match.
     CREATE TABLE IF NOT EXISTS habits (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       name        TEXT NOT NULL,
       points      INTEGER NOT NULL,
       created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-      archived_at TEXT
+      archived_at TEXT,
+      description TEXT
     );
 
-    -- One row per habit ticked on a client-local calendar date (YYYY-MM-DD).
-    -- ledger_id is the 'earn' row it created (it may since have been removed
-    -- from the dashboard; unticking tolerates that).
+    -- One row per habit marked on a client-local calendar date (YYYY-MM-DD).
+    -- status 'done' earns points: ledger_id is the 'earn' row it created (it
+    -- may since have been removed from the dashboard; clearing tolerates
+    -- that). status 'missed' earns nothing and has ledger_id NULL. status was
+    -- added later (see addColumnIfMissing), so it stays LAST here.
     CREATE TABLE IF NOT EXISTS habit_checks (
       habit_id INTEGER NOT NULL,
       date     TEXT NOT NULL,
       ledger_id INTEGER,
+      status   TEXT NOT NULL DEFAULT 'done',
       PRIMARY KEY (habit_id, date)
     );
 
@@ -125,6 +132,25 @@ function initSchema(db: Database.Database) {
       value TEXT NOT NULL
     );
   `);
+
+  // Additive column migrations for tables that already exist on deployed DBs
+  // (CREATE TABLE IF NOT EXISTS never alters an existing table). Idempotent:
+  // each runs only when PRAGMA table_info lacks the column. Never rebuild a
+  // table. A fresh DB already has these columns from the CREATE above.
+  addColumnIfMissing(db, "habits", "description", "TEXT");
+  addColumnIfMissing(db, "habit_checks", "status", "TEXT NOT NULL DEFAULT 'done'");
+}
+
+function addColumnIfMissing(
+  db: Database.Database,
+  table: string,
+  column: string,
+  definition: string
+) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
 }
 
 export function getDb(): Database.Database {
