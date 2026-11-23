@@ -33,8 +33,10 @@ async function apiGet(
 // A Todoist `due` object (present only on tasks that have a due date/time).
 export interface TodoistDue {
   date: string; // e.g. "2026-07-08" (or an ISO datetime for timed tasks)
+  datetime?: string | null;
   string?: string; // the natural-language string the user typed, e.g. "Jul 8"
   is_recurring?: boolean;
+  // Todoist also sends lang, timezone, etc.; /api/upcoming drops them.
 }
 
 export interface ActiveDatedTask {

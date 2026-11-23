@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   deleteTaskOverride,
+  isCompletionProcessed,
   OVERRIDE_POINTS_MAX,
   upsertTaskOverride,
 } from "@/lib/queries";
@@ -17,7 +18,8 @@ function validId(id: string): boolean {
 
 // PUT { points, content? }: set (create or update) the points an upcoming task
 // will earn when completed. points is an integer in [1, 100000]; clearing is a
-// DELETE, never a 0-point save. The id is the ACTIVE Todoist task id.
+// DELETE, never a 0-point save. The id is the ACTIVE Todoist task id. 409 if
+// that id was already processed by sync (its override could never fire).
 export async function PUT(req: Request, { params }: Ctx) {
   try {
     const { id } = await params;
@@ -33,6 +35,18 @@ export async function PUT(req: Request, { params }: Ctx) {
       return NextResponse.json(
         { error: `Points must be an integer between 1 and ${OVERRIDE_POINTS_MAX}` },
         { status: 400 }
+      );
+    }
+    // A task id is only ever counted once: if this one was already completed
+    // and processed (e.g. reopened, or a recurring task), sync would skip it
+    // before looking up the override, so the points could never pay out.
+    if (isCompletionProcessed(id)) {
+      return NextResponse.json(
+        {
+          error:
+            "This task has already been completed once, and a task only earns points the first time it's completed, so points set ahead of time would never pay out.",
+        },
+        { status: 409 }
       );
     }
     const content =

@@ -371,6 +371,16 @@ export function upsertTaskOverride(
   return { ok: true };
 }
 
+// Whether a Todoist task id is already in processed_completions. Sync dedupes
+// on that id BEFORE looking up an override, so an override on such an id
+// (a reopened-then-recompleted task, or a recurring task whose completions
+// reuse the id) could never pay out — Upcoming hides and refuses those.
+export function isCompletionProcessed(taskId: string): boolean {
+  return !!getDb()
+    .prepare(`SELECT 1 FROM processed_completions WHERE completion_id = ?`)
+    .get(taskId);
+}
+
 // Clear an override. Idempotent.
 export function deleteTaskOverride(taskId: string): { ok: true; deleted: boolean } {
   const result = getDb()

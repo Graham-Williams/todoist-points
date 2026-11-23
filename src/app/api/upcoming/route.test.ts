@@ -17,7 +17,9 @@ globalThis.fetch = (async (input: string | URL | Request) => {
   const results = [
     { id: "a", content: "Dated A", labels: ["x"], due: { date: "2026-11-25", string: "Nov 25" } },
     { id: "b", content: "Undated B", labels: [], due: null },
-    { id: "c", content: "Dated C", labels: [], due: { date: "2026-11-26" } },
+    { id: "c", content: "Dated C", labels: [], due: { date: "2026-11-26", lang: "en", timezone: null, is_recurring: false } },
+    { id: "r", content: "Recurring R", labels: [], due: { date: "2026-11-24", string: "every day", is_recurring: true } },
+    { id: "done-before", content: "Reopened D", labels: [], due: { date: "2026-11-28", datetime: "2026-11-28T15:00:00" } },
   ];
   return new Response(JSON.stringify({ results, next_cursor: null }), { status: 200 });
 }) as typeof fetch;
@@ -30,7 +32,9 @@ const put = (id: string, body: unknown) =>
   );
 
 beforeEach(() => {
-  getDb().exec(`DELETE FROM task_point_overrides; DELETE FROM list_order;`);
+  getDb().exec(
+    `DELETE FROM task_point_overrides; DELETE FROM list_order; DELETE FROM processed_completions;`
+  );
 });
 
 test("GET lists only due-dated tasks, with saved points and no labels, in drag order", async () => {
@@ -38,9 +42,30 @@ test("GET lists only due-dated tasks, with saved points and no labels, in drag o
   q.setOrder("upcoming", ["c", "a"]);
   const body = await (await GET()).json();
   assert.deepEqual(body.tasks, [
-    { id: "c", content: "Dated C", due: { date: "2026-11-26" }, points: 15 },
+    { id: "c", content: "Dated C", due: { date: "2026-11-26", is_recurring: false }, points: 15 },
     { id: "a", content: "Dated A", due: { date: "2026-11-25", string: "Nov 25" }, points: null },
+    {
+      id: "done-before",
+      content: "Reopened D",
+      due: { date: "2026-11-28", datetime: "2026-11-28T15:00:00" },
+      points: null,
+    },
   ]);
+});
+
+test("GET hides recurring tasks and tasks already processed by sync", async () => {
+  getDb().prepare(`INSERT INTO processed_completions (completion_id) VALUES ('done-before')`).run();
+  const ids = ((await (await GET()).json()).tasks as { id: string }[]).map((t) => t.id);
+  assert.deepEqual(ids.sort(), ["a", "c"]);
+});
+
+test("PUT refuses (409) an id already in processed_completions, saving nothing", async () => {
+  getDb().prepare(`INSERT INTO processed_completions (completion_id) VALUES ('done-before')`).run();
+  const res = await put("done-before", { points: 5 });
+  assert.equal(res.status, 409);
+  assert.match((await res.json()).error, /first time/);
+  assert.equal(q.getTaskOverride("done-before"), undefined);
+  assert.equal((await put("a", { points: 5 })).status, 200);
 });
 
 test("PUT upserts [1, 100000]; DELETE clears idempotently", async () => {
