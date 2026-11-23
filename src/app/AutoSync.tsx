@@ -39,7 +39,7 @@ export default function AutoSync() {
       setLastSynced(Date.now());
       // Notify every view to refetch its data. A single global AutoSync (in the
       // layout header) drives all pages via this event — see DashboardRefresh,
-      // the labels/rewards/review pages, and ReviewNavLink.
+      // the rewards/review/habits pages, and ReviewNavLink.
       window.dispatchEvent(new CustomEvent("todoist:synced"));
     } catch (err) {
       setError((err as Error).message);

@@ -56,11 +56,15 @@ export default function AboutPage() {
       </section>
 
       <div className="border-t border-slate-800 pt-6">
+        <p className="mb-2 text-sm text-slate-400">
+          Complete tasks in Todoist as usual. Each one shows up in Review, where
+          you give it a point value.
+        </p>
         <Link
-          href="/labels"
+          href="/review"
           className="text-sm font-medium text-emerald-400 hover:text-emerald-300"
         >
-          Set your label point values →
+          Go to Review →
         </Link>
       </div>
     </div>

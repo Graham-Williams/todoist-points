@@ -1,5 +1,4 @@
 import { getStats } from "@/lib/queries";
-import type { EarningBadge } from "@/lib/earningSource";
 import DashboardRefresh from "./DashboardRefresh";
 import EarningControls from "./EarningControls";
 
@@ -11,25 +10,6 @@ function StatCard({ label, value, accent }: { label: string; value: number; acce
       <div className="text-sm text-slate-400">{label}</div>
       <div className={`mt-1 text-3xl font-bold ${accent}`}>{value}</div>
     </div>
-  );
-}
-
-// Color-coded pill per earning source. Label badges reuse the neutral slate
-// pill from the review page; manual/pre-assigned get their own accent so the
-// provenance reads at a glance.
-const BADGE_STYLES: Record<EarningBadge["kind"], string> = {
-  manual: "border-amber-900 bg-amber-950/40 text-amber-300",
-  "pre-assigned": "border-violet-900 bg-violet-950/40 text-violet-300",
-  label: "border-slate-700 bg-slate-800 text-slate-300",
-};
-
-function SourceBadge({ badge }: { badge: EarningBadge }) {
-  return (
-    <span
-      className={`rounded-full border px-2 py-0.5 text-xs font-medium ${BADGE_STYLES[badge.kind]}`}
-    >
-      {badge.text}
-    </span>
   );
 }
 
@@ -52,8 +32,8 @@ export default function DashboardPage() {
         <h2 className="mb-3 text-lg font-semibold">Recent earnings</h2>
         {stats.recentEarnings.length === 0 ? (
           <p className="text-sm text-slate-500">
-            Nothing yet. Configure label points and complete some tasks — points
-            sync in automatically.
+            Nothing yet. Complete tasks in Todoist — they show up in Review,
+            where you assign their points.
           </p>
         ) : (
           <ul className="divide-y divide-slate-800 rounded-xl border border-slate-800">
@@ -62,12 +42,7 @@ export default function DashboardPage() {
                 key={e.id}
                 className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
               >
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <span className="break-words text-sm text-slate-200">{e.title}</span>
-                  {e.badges.map((badge, i) => (
-                    <SourceBadge key={`${badge.kind}-${badge.text}-${i}`} badge={badge} />
-                  ))}
-                </div>
+                <span className="min-w-0 break-words text-sm text-slate-200">{e.title}</span>
                 <div className="flex items-center gap-3 sm:shrink-0">
                   <span className="shrink-0 font-semibold text-emerald-400">+{e.points}</span>
                   <EarningControls id={e.id} points={e.points} />

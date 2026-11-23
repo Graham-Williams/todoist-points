@@ -18,6 +18,8 @@ function resolveDbPath(): string {
 function initSchema(db: Database.Database) {
   db.pragma("journal_mode = WAL");
   db.exec(`
+    -- LEGACY, unused since points moved to the Review tab. Kept (never dropped)
+    -- so existing databases are untouched.
     CREATE TABLE IF NOT EXISTS label_points (
       label_name TEXT PRIMARY KEY,
       points     INTEGER NOT NULL DEFAULT 0
@@ -58,11 +60,8 @@ function initSchema(db: Database.Database) {
       created_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
-    -- Manual point pre-assignments for UPCOMING (uncompleted, dated) tasks.
-    -- Keyed by the ACTIVE Todoist task id, which equals the completed item's
-    -- id on sync (verified 2026-07-08). When such a task is completed, sync
-    -- awards EXACTLY these points (manual override beats label-based points)
-    -- and deletes the row (it is stale once the task is done). See sync route.
+    -- LEGACY, unused: manual point pre-assignments for upcoming tasks (the
+    -- feature was removed). Kept (never dropped) so existing DBs are untouched.
     CREATE TABLE IF NOT EXISTS task_point_overrides (
       task_id    TEXT PRIMARY KEY,
       points     INTEGER NOT NULL,
@@ -72,7 +71,8 @@ function initSchema(db: Database.Database) {
 
     -- Generic, per-list manual ordering. One row per (list, item) records the
     -- user's dragged position for that item within a named list. Valid list
-    -- values: 'rewards', 'labels', 'review', 'upcoming' (see queries.ts). The
+    -- values: see ORDER_LISTS in queries.ts (old 'labels'/'upcoming' rows may
+    -- linger harmlessly). The
     -- GET paths left-join these positions so a reload reflects the custom order;
     -- items with no stored position keep their natural order and sort last.
     CREATE TABLE IF NOT EXISTS list_order (
