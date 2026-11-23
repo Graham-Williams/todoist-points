@@ -1,12 +1,7 @@
 import { NextResponse } from "next/server";
 import { daysBetween, isValidDateStr } from "@/lib/dates";
-import {
-  createHabit,
-  getHabitWeek,
-  HABIT_NAME_MAX,
-  HABIT_POINTS_MAX,
-} from "@/lib/habits";
-import { parseIntInRange } from "@/lib/validate";
+import { createHabit, getHabitWeek } from "@/lib/habits";
+import { parseHabitInput } from "@/lib/validate";
 
 const MAX_SPAN_DAYS = 14;
 
@@ -38,29 +33,21 @@ export async function GET(req: Request) {
   }
 }
 
-// POST { name, points }: add a habit. name is trimmed, 1–100 chars; points is an
-// integer in [1, 100000].
+// POST { name, points, description? }: add a habit. name is trimmed, 1–100
+// chars; points is an integer in [1, 100000]; description is optional text
+// (trimmed, at most 500 chars, blank -> none).
 export async function POST(req: Request) {
   try {
-    const body = ((await req.json().catch(() => null)) ?? {}) as {
-      name?: unknown;
-      points?: unknown;
-    };
-    const name = typeof body.name === "string" ? body.name.trim() : "";
-    if (name.length < 1 || name.length > HABIT_NAME_MAX) {
-      return NextResponse.json(
-        { error: `Name must be 1–${HABIT_NAME_MAX} characters` },
-        { status: 400 }
-      );
+    const body = await req.json().catch(() => null);
+    const parsed = parseHabitInput(body, false);
+    if (!parsed.ok) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 });
     }
-    const points = parseIntInRange(body.points, 1, HABIT_POINTS_MAX);
-    if (points === null) {
-      return NextResponse.json(
-        { error: `Points must be an integer between 1 and ${HABIT_POINTS_MAX}` },
-        { status: 400 }
-      );
-    }
-    return NextResponse.json({ ok: true, habit: createHabit(name, points) });
+    const { name, points, description } = parsed.value;
+    return NextResponse.json({
+      ok: true,
+      habit: createHabit(name!, points!, description ?? null),
+    });
   } catch (err) {
     console.error(err);
     return NextResponse.json({ error: "Failed to add habit" }, { status: 500 });

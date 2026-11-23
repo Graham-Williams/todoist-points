@@ -18,3 +18,15 @@ test("parseIntInRange: numbers and numeric strings in range only", () => {
     assert.equal(parseIntInRange(bad, 1, 10), null, String(bad));
   }
 });
+
+test("parseDescription: optional, trimmed, blank -> null, max 500", async () => {
+  const { parseDescription } = await import("./validate.ts");
+  assert.equal(parseDescription(undefined), null);
+  assert.equal(parseDescription(null), null);
+  assert.equal(parseDescription("   "), null);
+  assert.equal(parseDescription("  Before breakfast  "), "Before breakfast");
+  assert.equal(parseDescription("x".repeat(500)), "x".repeat(500));
+  assert.equal(parseDescription(`  ${"x".repeat(500)}  `), "x".repeat(500));
+  assert.equal(parseDescription("x".repeat(501)), undefined);
+  for (const bad of [5, true, [], {}]) assert.equal(parseDescription(bad), undefined);
+});

@@ -7,18 +7,30 @@ import { lastNLocalDates, localDateStr } from "@/lib/dates";
 interface Habit {
   id: number;
   name: string;
+  description: string | null;
   points: number;
 }
 
+type Status = "done" | "missed";
+
 interface HabitWeek {
   habits: Habit[];
-  checks: { habit_id: number; date: string }[];
+  checks: { habit_id: number; date: string; status: Status }[];
   bonuses: { date: string; points: number | null }[];
   bonusPoints: number;
 }
 
 const DAYS = 7;
 const checkKey = (habitId: number, date: string) => `${habitId}|${date}`;
+
+// A tap cycles blank -> done -> missed -> blank.
+function nextStatus(current: Status | undefined): Status | null {
+  if (current === undefined) return "done";
+  if (current === "done") return "missed";
+  return null;
+}
+
+const STATUS_WORDS: Record<Status, string> = { done: "done", missed: "missed" };
 
 // "Mon" / "23" for a local YYYY-MM-DD date.
 function dayLabel(date: string): { weekday: string; day: number } {
@@ -45,7 +57,8 @@ export default function HabitsPage() {
   // "today" during render would bake in the build machine's date.
   const [days, setDays] = useState<string[]>([]);
   const [habits, setHabits] = useState<Habit[]>([]);
-  const [checks, setChecks] = useState<Set<string>>(new Set());
+  // habit|date -> its mark; absent = not marked.
+  const [checks, setChecks] = useState<Map<string, Status>>(new Map());
   const [bonuses, setBonuses] = useState<Map<string, number | null>>(new Map());
   const [bonusPoints, setBonusPoints] = useState(10);
   const [loading, setLoading] = useState(true);
@@ -53,8 +66,16 @@ export default function HabitsPage() {
 
   // Add form.
   const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
   const [points, setPoints] = useState("5");
   const [adding, setAdding] = useState(false);
+
+  // Inline edit of one habit (name / description / points).
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editPoints, setEditPoints] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
 
   // Remove (two-step confirm) and bonus edit.
   const [confirmRemove, setConfirmRemove] = useState<number | null>(null);
@@ -89,7 +110,9 @@ export default function HabitsPage() {
       if (pendingToggles.current > 0) return; // a toggle started meanwhile
       setDays(range);
       setHabits(data.habits);
-      setChecks(new Set(data.checks.map((c) => checkKey(c.habit_id, c.date))));
+      setChecks(
+        new Map(data.checks.map((c) => [checkKey(c.habit_id, c.date), c.status]))
+      );
       setBonuses(new Map(data.bonuses.map((b) => [b.date, b.points])));
       setBonusPoints(data.bonusPoints);
       setError(null);
@@ -109,34 +132,41 @@ export default function HabitsPage() {
     return () => window.removeEventListener("todoist:synced", onSynced);
   }, [load]);
 
-  async function toggle(habit: Habit, date: string) {
+  async function cycle(habit: Habit, date: string) {
     const key = checkKey(habit.id, date);
     if (busyRef.current.has(key)) return;
-    const wasDone = checks.has(key);
+    const prev = checks.get(key);
+    const next = nextStatus(prev);
     const setBusy = (busy: boolean) => {
       if (busy) busyRef.current.add(key);
       else busyRef.current.delete(key);
       setBusyCells(new Set(busyRef.current));
     };
     setBusy(true);
-    const flip = (done: boolean) =>
-      setChecks((prev) => {
-        const next = new Set(prev);
-        if (done) next.add(key);
-        else next.delete(key);
-        return next;
+    const show = (status: Status | null | undefined) =>
+      setChecks((m) => {
+        const copy = new Map(m);
+        if (status) copy.set(key, status);
+        else copy.delete(key);
+        return copy;
       });
-    flip(!wasDone);
+    show(next);
     setError(null);
     pendingToggles.current += 1;
     try {
-      const res = await fetch(`/api/habits/${habit.id}/checks/${date}`, {
-        method: wasDone ? "DELETE" : "PUT",
-      });
+      const res = await fetch(`/api/habits/${habit.id}/checks/${date}`,
+        next === null
+          ? { method: "DELETE" }
+          : {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ status: next }),
+            }
+      );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? "Failed to update habit");
     } catch (err) {
-      flip(wasDone); // revert
+      show(prev); // revert
       setError((err as Error).message);
     } finally {
       setBusy(false);
@@ -161,17 +191,52 @@ export default function HabitsPage() {
       const res = await fetch("/api/habits", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, points: n }),
+        body: JSON.stringify({ name, description, points: n }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? "Failed to add habit");
       setName("");
+      setDescription("");
       setPoints("5");
       await load();
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setAdding(false);
+    }
+  }
+
+  function startEdit(h: Habit) {
+    setError(null);
+    setConfirmRemove(null);
+    setEditingId(h.id);
+    setEditName(h.name);
+    setEditDescription(h.description ?? "");
+    setEditPoints(String(h.points));
+  }
+
+  async function saveEdit(id: number) {
+    const n = Number(editPoints);
+    if (!editName.trim() || editPoints.trim() === "" || !Number.isInteger(n) || n < 1 || n > 100000) {
+      setError("Enter a name and a whole number of points (1–100000).");
+      return;
+    }
+    setError(null);
+    setSavingEdit(true);
+    try {
+      const res = await fetch(`/api/habits/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: editName, description: editDescription, points: n }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Failed to save habit");
+      setEditingId(null);
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSavingEdit(false);
     }
   }
 
@@ -294,8 +359,9 @@ export default function HabitsPage() {
       </div>
 
       <p className="text-sm text-slate-400">
-        Tick off a habit each day you do it to earn its points. Finish every
-        habit in a day to earn the bonus too{bonusPoints === 0 ? " (currently off)" : ""}.
+        Tap a day once to mark a habit done (earns its points), again to mark
+        it missed, and again to clear it. Mark every habit done in a day to earn
+        the bonus too{bonusPoints === 0 ? " (currently off)" : ""}.
       </p>
 
       {loading && <p className="text-slate-500">Loading…</p>}
@@ -347,62 +413,135 @@ export default function HabitsPage() {
               renderItem={(h) => (
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                   <div className="min-w-0 sm:flex-1">
-                    <div className="break-words text-sm text-slate-100">{h.name}</div>
-                    {confirmRemove === h.id ? (
-                      <div className="mt-1 flex flex-wrap items-center gap-2">
-                        <span className="text-xs text-slate-400">Remove?</span>
-                        <button
-                          onClick={() => removeHabit(h.id)}
-                          disabled={removing}
-                          className="rounded-md border border-rose-900 px-2 py-1 text-xs text-rose-400 hover:bg-rose-950 disabled:opacity-40"
-                        >
-                          {removing ? "Removing…" : "Confirm"}
-                        </button>
-                        <button
-                          onClick={() => setConfirmRemove(null)}
-                          disabled={removing}
-                          className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40"
-                        >
-                          Cancel
-                        </button>
+                    {editingId === h.id ? (
+                      <div className="space-y-2">
+                        <input
+                          value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                          maxLength={100}
+                          disabled={savingEdit}
+                          aria-label="Habit name"
+                          className="w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-base text-white focus:border-emerald-500 focus:outline-none disabled:opacity-50 sm:text-sm"
+                        />
+                        <textarea
+                          value={editDescription}
+                          onChange={(e) => setEditDescription(e.target.value)}
+                          maxLength={500}
+                          rows={2}
+                          disabled={savingEdit}
+                          placeholder="Description (optional)"
+                          aria-label="Habit description"
+                          className="w-full resize-y rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-base text-white focus:border-emerald-500 focus:outline-none disabled:opacity-50 sm:text-xs"
+                        />
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <input
+                              type="number"
+                              min={1}
+                              max={100000}
+                              value={editPoints}
+                              onChange={(e) => setEditPoints(e.target.value)}
+                              disabled={savingEdit}
+                              aria-label="Points per day"
+                              className="w-24 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-right text-base text-white focus:border-emerald-500 focus:outline-none disabled:opacity-50 sm:text-xs"
+                            />
+                            <span className="text-xs text-slate-400">pts</span>
+                            <button
+                              onClick={() => saveEdit(h.id)}
+                              disabled={savingEdit}
+                              className="rounded-md bg-emerald-600 px-2.5 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-40 sm:py-1"
+                            >
+                              {savingEdit ? "Saving…" : "Save"}
+                            </button>
+                            <button
+                              onClick={() => setEditingId(null)}
+                              disabled={savingEdit}
+                              className="rounded-md border border-slate-700 px-2.5 py-2 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40 sm:py-1"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                          <p className="mt-1 text-xs text-slate-500">
+                            New points apply to future ticks; points already
+                            earned stay as they were.
+                          </p>
+                        </div>
                       </div>
                     ) : (
-                      <div className="mt-0.5 flex flex-wrap items-center gap-x-2">
-                        <span className="whitespace-nowrap text-xs text-emerald-400">
-                          +{h.points} pts
-                        </span>
-                        <button
-                          onClick={() => setConfirmRemove(h.id)}
-                          className="text-xs text-slate-600 hover:text-rose-400"
-                        >
-                          Remove
-                        </button>
-                      </div>
+                      <>
+                        <div className="break-words text-sm text-slate-100">{h.name}</div>
+                        {h.description && (
+                          <div className="mt-0.5 whitespace-pre-line break-words text-xs text-slate-400">
+                            {h.description}
+                          </div>
+                        )}
+                        {confirmRemove === h.id ? (
+                          <div className="mt-1 flex flex-wrap items-center gap-2">
+                            <span className="text-xs text-slate-400">Remove?</span>
+                            <button
+                              onClick={() => removeHabit(h.id)}
+                              disabled={removing}
+                              className="rounded-md border border-rose-900 px-2 py-1 text-xs text-rose-400 hover:bg-rose-950 disabled:opacity-40"
+                            >
+                              {removing ? "Removing…" : "Confirm"}
+                            </button>
+                            <button
+                              onClick={() => setConfirmRemove(null)}
+                              disabled={removing}
+                              className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="mt-0.5 flex flex-wrap items-center gap-x-2">
+                            <span className="whitespace-nowrap text-xs text-emerald-400">
+                              +{h.points} pts
+                            </span>
+                            <button
+                              onClick={() => startEdit(h)}
+                              className="text-xs text-slate-600 hover:text-emerald-400"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => setConfirmRemove(h.id)}
+                              className="text-xs text-slate-600 hover:text-rose-400"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                   <div className={`flex self-end sm:shrink-0 sm:self-auto ${CELLS_GAP}`}>
                     {days.map((d) => {
-                      const done = checks.has(checkKey(h.id, d));
+                      const status = checks.get(checkKey(h.id, d));
                       const busy = busyCells.has(checkKey(h.id, d));
                       const isToday = d === today;
+                      const { weekday, day } = dayLabel(d);
                       return (
                         <button
                           key={d}
                           type="button"
-                          onClick={() => toggle(h, d)}
+                          onClick={() => cycle(h, d)}
                           disabled={busy}
                           aria-busy={busy}
-                          aria-pressed={done}
-                          aria-label={`${h.name} on ${d}${done ? " (done)" : ""}`}
+                          aria-label={`${h.name}, ${weekday} ${day}: ${
+                            status ? STATUS_WORDS[status] : "not marked"
+                          }`}
                           className={`${CELL} flex items-center justify-center rounded-md border text-lg font-bold transition-colors disabled:cursor-wait disabled:opacity-60 ${
-                            done
+                            status === "done"
                               ? "border-emerald-500 bg-emerald-600 text-white hover:bg-emerald-500"
-                              : `bg-slate-800/40 text-transparent hover:bg-slate-800 ${
-                                  isToday ? "border-emerald-800" : "border-slate-700"
-                                }`
+                              : status === "missed"
+                                ? "border-rose-700 bg-rose-950/60 text-rose-300 hover:bg-rose-900/60"
+                                : `bg-slate-800/40 text-transparent hover:bg-slate-800 ${
+                                    isToday ? "border-emerald-800" : "border-slate-700"
+                                  }`
                           }`}
                         >
-                          ✓
+                          <span aria-hidden>{status === "missed" ? "✗" : "✓"}</span>
                         </button>
                       );
                     })}
@@ -458,6 +597,16 @@ export default function HabitsPage() {
             placeholder="e.g. Stretch for 10 minutes"
             className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-base text-white focus:border-emerald-500 focus:outline-none sm:w-64 sm:text-sm"
             required
+          />
+        </div>
+        <div className="flex w-full flex-col gap-1 sm:w-auto">
+          <label className="text-xs text-slate-400">Description (optional)</label>
+          <input
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            maxLength={500}
+            placeholder="e.g. Before breakfast"
+            className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-base text-white focus:border-emerald-500 focus:outline-none sm:w-64 sm:text-sm"
           />
         </div>
         <div className="flex w-full flex-col gap-1 sm:w-auto">
