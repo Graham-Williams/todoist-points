@@ -15,9 +15,12 @@ function resolveDbPath(): string {
   return path.join(process.cwd(), "data", "todoist-points.db");
 }
 
-function initSchema(db: Database.Database) {
+// Exported for the migration test (src/lib/db.test.ts).
+export function initSchema(db: Database.Database) {
   db.pragma("journal_mode = WAL");
   db.exec(`
+    -- LEGACY, unused since points moved to the Review tab. Kept (never dropped)
+    -- so existing databases are untouched.
     CREATE TABLE IF NOT EXISTS label_points (
       label_name TEXT PRIMARY KEY,
       points     INTEGER NOT NULL DEFAULT 0
@@ -58,11 +61,10 @@ function initSchema(db: Database.Database) {
       created_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
-    -- Manual point pre-assignments for UPCOMING (uncompleted, dated) tasks.
-    -- Keyed by the ACTIVE Todoist task id, which equals the completed item's
-    -- id on sync (verified 2026-07-08). When such a task is completed, sync
-    -- awards EXACTLY these points (manual override beats label-based points)
-    -- and deletes the row (it is stale once the task is done). See sync route.
+    -- Points set ahead of time for UPCOMING (uncompleted, dated) tasks, keyed
+    -- by the ACTIVE Todoist task id, which equals the completed item's id on
+    -- sync (verified 2026-07-08). Sync awards EXACTLY these points on
+    -- completion (skipping the review queue) and deletes the row.
     CREATE TABLE IF NOT EXISTS task_point_overrides (
       task_id    TEXT PRIMARY KEY,
       points     INTEGER NOT NULL,
@@ -72,7 +74,8 @@ function initSchema(db: Database.Database) {
 
     -- Generic, per-list manual ordering. One row per (list, item) records the
     -- user's dragged position for that item within a named list. Valid list
-    -- values: 'rewards', 'labels', 'review', 'upcoming' (see queries.ts). The
+    -- values: see ORDER_LISTS in queries.ts (old 'labels' rows may linger
+    -- harmlessly). The
     -- GET paths left-join these positions so a reload reflects the custom order;
     -- items with no stored position keep their natural order and sort last.
     CREATE TABLE IF NOT EXISTS list_order (
@@ -81,7 +84,75 @@ function initSchema(db: Database.Database) {
       position  INTEGER NOT NULL,
       PRIMARY KEY (list, item_key)
     );
+
+    -- Manual balance overrides ("set balance to N", "reset to 0"). Each row is
+    -- the signed delta that moved the balance to the chosen value, so
+    -- balance = SUM(ledger.points) + SUM(balance_adjustments.delta) — see
+    -- getBalance() in queries.ts. Lifetime earned/spent stay ledger-only.
+    CREATE TABLE IF NOT EXISTS balance_adjustments (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      delta      INTEGER NOT NULL,
+      note       TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Daily habits (see src/lib/habits.ts). "Remove" sets archived_at (soft
+    -- delete) so past checks and their ledger rows keep their history.
+    -- description was added after the first preview shipped: older DBs get it
+    -- from addColumnIfMissing below, so keep it LAST here to match.
+    CREATE TABLE IF NOT EXISTS habits (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT NOT NULL,
+      points      INTEGER NOT NULL,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      archived_at TEXT,
+      description TEXT
+    );
+
+    -- One row per habit marked on a client-local calendar date (YYYY-MM-DD).
+    -- status 'done' earns points: ledger_id is the 'earn' row it created (it
+    -- may since have been removed from the dashboard; clearing tolerates
+    -- that). status 'missed' earns nothing and has ledger_id NULL. status was
+    -- added later (see addColumnIfMissing), so it stays LAST here.
+    CREATE TABLE IF NOT EXISTS habit_checks (
+      habit_id INTEGER NOT NULL,
+      date     TEXT NOT NULL,
+      ledger_id INTEGER,
+      status   TEXT NOT NULL DEFAULT 'done',
+      PRIMARY KEY (habit_id, date)
+    );
+
+    -- The "all habits done" bonus awarded for a date, and its ledger row.
+    CREATE TABLE IF NOT EXISTS habit_bonus (
+      date      TEXT PRIMARY KEY,
+      ledger_id INTEGER
+    );
+
+    -- Small key/value settings (e.g. habit_bonus_points).
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
+
+  // Additive column migrations for tables that already exist on deployed DBs
+  // (CREATE TABLE IF NOT EXISTS never alters an existing table). Idempotent:
+  // each runs only when PRAGMA table_info lacks the column. Never rebuild a
+  // table. A fresh DB already has these columns from the CREATE above.
+  addColumnIfMissing(db, "habits", "description", "TEXT");
+  addColumnIfMissing(db, "habit_checks", "status", "TEXT NOT NULL DEFAULT 'done'");
+}
+
+function addColumnIfMissing(
+  db: Database.Database,
+  table: string,
+  column: string,
+  definition: string
+) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
 }
 
 export function getDb(): Database.Database {

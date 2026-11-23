@@ -3,12 +3,10 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-// Nav link for the review queue with a small count badge. The badge shows the
-// total number of things awaiting a points decision: completed-but-unassigned
-// tasks (the /api/review queue) PLUS upcoming dated tasks that don't yet have a
-// saved override (/api/upcoming rows with points == null). The count is fetched
-// client-side (the layout is a server component and can't easily poll). Kept
-// simple: one fetch on mount, refreshed on focus and after each sync.
+// Nav link for the review queue with a small count badge: the number of
+// completed tasks awaiting a points decision (/api/review). The count is fetched
+// client-side (the layout is a server component and can't easily poll): on
+// mount, on tab focus, and after each `todoist:synced` event.
 export default function ReviewNavLink() {
   const [count, setCount] = useState(0);
 
@@ -16,18 +14,10 @@ export default function ReviewNavLink() {
     let cancelled = false;
     const load = async () => {
       try {
-        const [reviewRes, upcomingRes] = await Promise.all([
-          fetch("/api/review"),
-          fetch("/api/upcoming"),
-        ]);
-        if (!reviewRes.ok || !upcomingRes.ok) return;
-        const reviewData = await reviewRes.json();
-        const upcomingData = await upcomingRes.json();
-        const pending = (reviewData.tasks ?? []).length;
-        const upcomingUnassigned = (upcomingData.tasks ?? []).filter(
-          (t: { points: number | null }) => t.points == null
-        ).length;
-        if (!cancelled) setCount(pending + upcomingUnassigned);
+        const res = await fetch("/api/review");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setCount((data.tasks ?? []).length);
       } catch {
         // Ignore — badge is best-effort.
       }

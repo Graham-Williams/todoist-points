@@ -1,15 +1,16 @@
 # Todoist Points
 
-A personal gamification layer for [Todoist](https://todoist.com): earn points for completing tasks — valued by the **label** on each task — and spend those points on rewards you define.
+A personal gamification layer for [Todoist](https://todoist.com): earn points for completing tasks and keeping daily habits, and spend those points on rewards you define.
 
 Built as the pilot project for a product-manager-style autonomous coding workflow.
 
 ## How points work
 
-- You assign a point value to each of your Todoist **labels**.
-- When you complete a task, it awards points based on its label(s).
+- Complete tasks in Todoist as usual. Each completed task shows up in the app's **Review** tab, where you assign it a point value (or discard it).
+- For tasks with a due date you can set the points ahead of time (Review → Upcoming); they're paid out automatically when you complete the task.
+- Add daily **habits** and tick them off each day to earn their points; finishing every habit in a day earns a bonus.
 - You define **rewards** (name + point cost) and redeem them to spend points.
-- A dashboard shows your balance, recent earnings, and redemption history.
+- A dashboard shows your balance (which you can also set or reset), recent earnings, and spending and adjustment history.
 
 ## Stack
 

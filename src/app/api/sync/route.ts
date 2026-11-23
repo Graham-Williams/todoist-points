@@ -1,10 +1,26 @@
 import { NextResponse } from "next/server";
-import { getCompletedTasks } from "@/lib/todoist";
+import {
+  getCompletedTasks,
+  getRecurringCompletions,
+  type RecurringCompletion,
+} from "@/lib/todoist";
 import { getDb } from "@/lib/db";
-import { getLabelPointsMap } from "@/lib/queries";
 
-// POST: fetch completed tasks since the last sync and award points for any
-// completion not already processed. Idempotent — re-syncing never double-counts.
+// POST: fetch completed tasks since the last sync. For each completion not
+// already processed: if points were set ahead of time (Review → Upcoming), award
+// exactly that; otherwise queue it for manual review (Review → Completed).
+// Labels play no part in scoring. Idempotent — re-syncing never re-awards or
+// re-queues.
+//
+// Recurring tasks: their completions are missing from by_completion_date and
+// share one task id, so they come from the activity log instead
+// (getRecurringCompletions), keyed `recurring:<eventId>` — one review-queue row
+// per completion, never pre-assigned. That source keeps its own window
+// (sync_state 'last_recurring_sync'), so if the activity log fails the normal
+// path still syncs and the recurring window is simply retried next time.
+
+const LOOKBACK_DAYS = 90;
+const OVERLAP_HOURS = 6;
 export async function POST() {
   try {
     const db = getDb();
@@ -21,16 +37,41 @@ export async function POST() {
       // Re-scan from a few hours before last sync to catch any stragglers;
       // processed_completions dedupes anyway.
       const from = new Date(lastSyncRow.value);
-      from.setHours(from.getHours() - 6);
+      from.setHours(from.getHours() - OVERLAP_HOURS);
       since = formatTodoistTs(from);
     } else {
       const from = new Date(now);
-      from.setDate(from.getDate() - 90);
+      from.setDate(from.getDate() - LOOKBACK_DAYS);
       since = formatTodoistTs(from);
     }
 
     const completed = await getCompletedTasks(since, until);
-    const pointsMap = getLabelPointsMap();
+
+    // Recurring completions: own window, from last_recurring_sync (or, the
+    // first time, the same start as the normal path — going forward only),
+    // minus the same overlap, never more than LOOKBACK_DAYS back. A failure
+    // here is logged and skipped: it must not block normal completions.
+    const lastRecurringRow = db
+      .prepare(`SELECT value FROM sync_state WHERE key = 'last_recurring_sync'`)
+      .get() as { value: string } | undefined;
+    let recurringSince: Date;
+    if (lastRecurringRow?.value) {
+      recurringSince = new Date(lastRecurringRow.value);
+      recurringSince.setHours(recurringSince.getHours() - OVERLAP_HOURS);
+    } else {
+      recurringSince = new Date(since); // naive local, same as the normal path
+    }
+    const floor = new Date(now);
+    floor.setDate(floor.getDate() - LOOKBACK_DAYS);
+    if (Number.isNaN(recurringSince.getTime()) || recurringSince < floor) {
+      recurringSince = floor;
+    }
+    let recurring: RecurringCompletion[] | null = null;
+    try {
+      recurring = await getRecurringCompletions(recurringSince, now);
+    } catch (err) {
+      console.error("Recurring completions fetch failed; skipping this run", err);
+    }
 
     const alreadyProcessed = db.prepare(
       `SELECT 1 FROM processed_completions WHERE completion_id = ?`
@@ -38,87 +79,76 @@ export async function POST() {
     const markProcessed = db.prepare(
       `INSERT OR IGNORE INTO processed_completions (completion_id) VALUES (?)`
     );
-    const insertLedger = db.prepare(
-      `INSERT INTO ledger (type, points, source_id, description) VALUES ('earn', ?, ?, ?)`
-    );
     const insertPendingReview = db.prepare(
       `INSERT OR IGNORE INTO pending_review
          (completion_id, content, labels, completed_at, created_at)
        VALUES (?, ?, ?, ?, datetime('now'))`
     );
-    // Manual point pre-assignment (see /review "Upcoming"). Keyed by the ACTIVE
-    // task id, which equals the completed item's `id` here (verified 2026-07-08).
+    const insertLedger = db.prepare(
+      `INSERT INTO ledger (type, points, source_id, description) VALUES ('earn', ?, ?, ?)`
+    );
+    // Points set ahead of time, keyed by the ACTIVE task id, which equals the
+    // completed item's `id` here (verified 2026-07-08).
     const lookupOverride = db.prepare(
       `SELECT points FROM task_point_overrides WHERE task_id = ?`
     );
     const deleteOverride = db.prepare(
       `DELETE FROM task_point_overrides WHERE task_id = ?`
     );
-
-    let newlyProcessed = 0;
-    let pointsAwarded = 0;
+    let newlyQueued = 0;
+    let preassignedAwarded = 0;
+    let recurringQueued = 0;
 
     const tx = db.transaction(() => {
       for (const task of completed) {
         // Idempotency guard FIRST: a completion already processed is skipped
-        // entirely, so re-syncing a stale window can never re-award or re-fire
-        // (or re-delete) an override — even though the override row is gone by
-        // then, this ordering is what makes the whole loop safe.
+        // entirely, so re-syncing a stale window can never re-queue it — and a
+        // completion that was awarded, discarded, or whose earning was removed
+        // from the dashboard never comes back.
         if (alreadyProcessed.get(task.id)) continue;
-        const labels = task.labels ?? [];
 
-        // MANUAL OVERRIDE WINS. If the user pre-assigned a point value to this
-        // (formerly upcoming) task, award EXACTLY that value, bypass the label
-        // logic AND the pending_review queue (even for a no-label task), then
-        // delete the now-stale override row within this same transaction. The
-        // ledger source_id stays the completion id (unchanged dedup key), and
-        // markProcessed still runs below, so idempotency is preserved.
         const override = lookupOverride.get(task.id) as
           | { points: number }
           | undefined;
         if (override) {
-          insertLedger.run(
-            override.points,
-            task.id,
-            `${task.content} (pre-assigned)`
-          );
+          // Pre-assigned: award EXACTLY that value, skip the review queue, and
+          // delete the now-stale override in this same transaction. The
+          // " (pre-assigned)" suffix is stripped for display (earningTitle).
+          insertLedger.run(override.points, task.id, `${task.content} (pre-assigned)`);
           deleteOverride.run(task.id);
-          newlyProcessed += 1;
-          pointsAwarded += override.points;
-          markProcessed.run(task.id);
-          continue;
-        }
-
-        // Multi-label task earns the MAX of its labels' point values
-        // (single label = that value; no labels = 0).
-        const earned = labels.reduce(
-          (max, name) => Math.max(max, pointsMap[name] ?? 0),
-          0
-        );
-        // Tasks that earn 0 points used to be invisible. Now, instead of
-        // silently dropping them, we queue them for manual review so the user
-        // can assign a points value or discard them ("going forward only" —
-        // no retroactive scoring of history). They are still marked processed
-        // so they are skipped on future syncs.
-        if (earned > 0) {
-          const labelDesc = labels.length ? ` [${labels.join(", ")}]` : "";
-          insertLedger.run(earned, task.id, `${task.content}${labelDesc}`);
-          newlyProcessed += 1;
-          pointsAwarded += earned;
+          preassignedAwarded += 1;
         } else {
-          insertPendingReview.run(
+          // Everything else goes to the review queue ("going forward only" —
+          // no retroactive scoring of history). The pending_review.labels
+          // column is kept for schema stability but is never displayed.
+          const queued = insertPendingReview.run(
             task.id,
             task.content,
-            JSON.stringify(labels),
+            JSON.stringify(task.labels ?? []),
             task.completed_at ?? null
           );
+          newlyQueued += queued.changes;
         }
         markProcessed.run(task.id);
       }
-      db.prepare(
-        `INSERT INTO sync_state (key, value) VALUES ('last_sync', ?)
+
+      // Recurring completions: one queue row per completion event. Never
+      // pre-assigned (Upcoming hides recurring tasks). Keys can't collide with
+      // the plain task-id keys above.
+      for (const r of recurring ?? []) {
+        const key = `recurring:${r.eventId}`;
+        if (alreadyProcessed.get(key)) continue;
+        recurringQueued += insertPendingReview.run(key, r.content, "[]", r.completedAt).changes;
+        markProcessed.run(key);
+      }
+
+      const setState = db.prepare(
+        `INSERT INTO sync_state (key, value) VALUES (?, ?)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-      ).run(until);
+      );
+      setState.run("last_sync", until);
+      // Only advance the recurring window when it was actually fetched.
+      if (recurring) setState.run("last_recurring_sync", now.toISOString());
     });
     tx();
 
@@ -131,8 +161,10 @@ export async function POST() {
     return NextResponse.json({
       ok: true,
       scanned: completed.length,
-      newlyProcessed,
-      pointsAwarded,
+      newlyQueued,
+      preassignedAwarded,
+      recurringQueued,
+      recurringOk: recurring !== null,
       pendingReview,
     });
   } catch (err) {

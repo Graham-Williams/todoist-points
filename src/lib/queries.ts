@@ -1,5 +1,5 @@
 import { getDb } from "./db";
-import { parseEarning, type EarningBadge } from "./earningSource";
+import { earningTitle } from "./earningSource";
 import { applyOrder } from "./order";
 
 // Re-exported so callers can keep importing it from "@/lib/queries". The
@@ -24,18 +24,22 @@ export interface Reward {
   created_at: string;
 }
 
-export interface LabelPoint {
-  label_name: string;
-  points: number;
-}
-
-// A recent-earning row prepared for display: the raw ledger fields plus the
-// clean task title and source badges parsed off its description suffix.
+// A recent-earning row prepared for display: the ledger id/points plus the
+// clean task title (legacy provenance suffixes stripped, see earningSource.ts).
 export interface RecentEarning {
   id: number;
   points: number;
   title: string;
-  badges: EarningBadge[];
+}
+
+// One row of the dashboard "Spending & adjustments" history: a reward
+// redemption (negative ledger row) or a manual balance adjustment.
+export interface HistoryEntry {
+  kind: "redeem" | "adjust";
+  id: number;
+  points: number; // signed: redemptions negative, adjustments +/- delta
+  description: string | null;
+  created_at: string;
 }
 
 export interface DashboardStats {
@@ -43,7 +47,7 @@ export interface DashboardStats {
   totalEarned: number;
   totalSpent: number;
   recentEarnings: RecentEarning[];
-  redemptions: LedgerEntry[];
+  history: HistoryEntry[];
 }
 
 export function getStats(): DashboardStats {
@@ -68,42 +72,74 @@ export function getStats(): DashboardStats {
         `SELECT * FROM ledger WHERE type = 'earn' AND points > 0 ORDER BY id DESC LIMIT 20`
       )
       .all() as LedgerEntry[]
-  ).map((e): RecentEarning => {
-    const { title, badges } = parseEarning(e.description);
-    return { id: e.id, points: e.points, title, badges };
-  });
+  ).map((e): RecentEarning => ({
+    id: e.id,
+    points: e.points,
+    title: earningTitle(e.description),
+  }));
 
-  const redemptions = db
+  const history = db
     .prepare(
-      `SELECT * FROM ledger WHERE type = 'redeem' ORDER BY id DESC LIMIT 20`
+      `SELECT 'redeem' AS kind, id, points, description, created_at
+         FROM ledger WHERE type = 'redeem'
+       UNION ALL
+       SELECT 'adjust' AS kind, id, delta AS points, note AS description, created_at
+         FROM balance_adjustments
+       ORDER BY created_at DESC, id DESC
+       LIMIT 20`
     )
-    .all() as LedgerEntry[];
+    .all() as HistoryEntry[];
 
   return {
-    balance: earned + spent,
+    balance: getBalance(),
     totalEarned: earned,
-    totalSpent: -spent,
+    totalSpent: spent === 0 ? 0 : -spent,
     recentEarnings,
-    redemptions,
+    history,
   };
 }
 
+// THE balance. Every balance shown or checked anywhere (dashboard, rewards
+// page, redeem check, review/ledger/habit responses) goes through here so the
+// two sources can't drift: every ledger row plus every manual adjustment.
 export function getBalance(): number {
   const db = getDb();
-  return (
-    (db.prepare(`SELECT COALESCE(SUM(points), 0) AS s FROM ledger`).get() as {
-      s: number;
-    }).s ?? 0
-  );
+  const row = db
+    .prepare(
+      `SELECT (SELECT COALESCE(SUM(points), 0) FROM ledger)
+            + (SELECT COALESCE(SUM(delta), 0) FROM balance_adjustments) AS s`
+    )
+    .get() as { s: number };
+  return row.s ?? 0;
 }
 
-export function getLabelPointsMap(): Record<string, number> {
+export const BALANCE_MAX = 1000000;
+
+// Set the balance to exactly `target` by recording the needed delta as a
+// balance_adjustments row (read + insert in one transaction). A zero delta
+// records nothing. Ledger history and lifetime totals are untouched.
+export function setBalance(target: number): {
+  ok: true;
+  newBalance: number;
+  delta: number;
+} {
+  if (!Number.isInteger(target) || target < 0 || target > BALANCE_MAX) {
+    throw new RangeError(
+      `Balance must be an integer between 0 and ${BALANCE_MAX}`
+    );
+  }
   const db = getDb();
-  const rows = db.prepare(`SELECT label_name, points FROM label_points`).all() as
-    LabelPoint[];
-  const map: Record<string, number> = {};
-  for (const r of rows) map[r.label_name] = r.points;
-  return map;
+  const tx = db.transaction(() => {
+    const delta = target - getBalance();
+    if (delta !== 0) {
+      db.prepare(
+        `INSERT INTO balance_adjustments (delta, note) VALUES (?, ?)`
+      ).run(delta, `Balance set to ${target}`);
+    }
+    return delta;
+  });
+  const delta = tx();
+  return { ok: true, newBalance: getBalance(), delta };
 }
 
 export function getRewards(): Reward[] {
@@ -122,12 +158,7 @@ export function getRewards(): Reward[] {
 // ---------------------------------------------------------------------------
 // Lists that can be manually reordered. Any other value is rejected by
 // setOrder so a bad/typo'd list name can never write orphan rows.
-export const ORDER_LISTS = new Set([
-  "rewards",
-  "labels",
-  "review",
-  "upcoming",
-]);
+export const ORDER_LISTS = new Set(["rewards", "review", "upcoming", "habits"]);
 
 // item_key -> position for a given list (used to left-join a list's rows so a
 // reload reflects the user's dragged order).
@@ -180,45 +211,21 @@ export function setOrder(list: string, keys: string[]): { ok: true } {
 export interface PendingReviewRow {
   completion_id: string;
   content: string;
-  labels: string[];
   completed_at: string | null;
 }
 
-interface PendingReviewDbRow {
-  completion_id: string;
-  content: string;
-  labels: string | null;
-  completed_at: string | null;
-}
-
-function parseLabels(raw: string | null): string[] {
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.map(String) : [];
-  } catch {
-    return [];
-  }
-}
-
-// All completions awaiting manual review (synced with 0 points), newest
-// completed first. Labels JSON is parsed to an array for the client.
+// All completions awaiting manual review, newest completed first, then the
+// user's drag order. (The table's legacy `labels` column is not exposed.)
 export function getPendingReview(): PendingReviewRow[] {
   const db = getDb();
   const rows = db
     .prepare(
-      `SELECT completion_id, content, labels, completed_at
+      `SELECT completion_id, content, completed_at
        FROM pending_review
        ORDER BY completed_at DESC, created_at DESC`
     )
-    .all() as PendingReviewDbRow[];
-  const mapped = rows.map((r) => ({
-    completion_id: r.completion_id,
-    content: r.content,
-    labels: parseLabels(r.labels),
-    completed_at: r.completed_at,
-  }));
-  return applyOrder(mapped, (r) => r.completion_id, getOrderMap("review"));
+    .all() as PendingReviewRow[];
+  return applyOrder(rows, (r) => r.completion_id, getOrderMap("review"));
 }
 
 export function getPendingReviewCount(): number {
@@ -308,12 +315,13 @@ export function updateEarningPoints(
 }
 
 // ---------------------------------------------------------------------------
-// Task point overrides (manual pre-assignment for upcoming, dated tasks)
+// Task point overrides (points set ahead of time for upcoming, dated tasks)
 // ---------------------------------------------------------------------------
-// A manual override, keyed by the ACTIVE Todoist task id, records a point value
-// to award EXACTLY when that task is later completed — beating the label-based
-// points entirely (see the sync route). Overrides are for uncompleted tasks; a
-// row is deleted when it fires (the task is done) so it never lingers.
+// An override, keyed by the ACTIVE Todoist task id, records a point value that
+// sync awards EXACTLY when that task is completed — skipping the review queue
+// (see the sync route). The row is deleted when it fires, so it never lingers.
+
+export const OVERRIDE_POINTS_MAX = 100000;
 
 export interface TaskOverrideRow {
   task_id: string;
@@ -321,11 +329,10 @@ export interface TaskOverrideRow {
   content: string | null;
 }
 
-// All saved overrides as a map task_id -> points. Used to left-join the
-// upcoming task list so saved values re-display on reload.
+// All saved overrides as task_id -> points (left-joined onto the live task
+// list so saved values re-display on reload).
 export function getTaskOverridesMap(): Record<string, number> {
-  const db = getDb();
-  const rows = db
+  const rows = getDb()
     .prepare(`SELECT task_id, points FROM task_point_overrides`)
     .all() as { task_id: string; points: number }[];
   const map: Record<string, number> = {};
@@ -333,44 +340,50 @@ export function getTaskOverridesMap(): Record<string, number> {
   return map;
 }
 
-// Look up a single override by task id (used by sync on each completed task).
 export function getTaskOverride(taskId: string): TaskOverrideRow | undefined {
-  const db = getDb();
-  return db
+  return getDb()
     .prepare(
       `SELECT task_id, points, content FROM task_point_overrides WHERE task_id = ?`
     )
     .get(taskId) as TaskOverrideRow | undefined;
 }
 
-// Upsert (create or update) an override. Points must be a positive integer;
+// Create or update an override. Points must be an integer in [1, 100000];
 // clearing is a DELETE (deleteTaskOverride), never a 0 upsert.
 export function upsertTaskOverride(
   taskId: string,
   points: number,
   content: string | null
 ): { ok: true } {
-  if (!Number.isInteger(points) || points < 1 || points > 100000) {
-    throw new Error("Points must be a positive integer no greater than 100000");
+  if (!Number.isInteger(points) || points < 1 || points > OVERRIDE_POINTS_MAX) {
+    throw new RangeError(
+      `Points must be an integer between 1 and ${OVERRIDE_POINTS_MAX}`
+    );
   }
-  const db = getDb();
-  db.prepare(
-    `INSERT INTO task_point_overrides (task_id, points, content)
-     VALUES (?, ?, ?)
-     ON CONFLICT(task_id) DO UPDATE SET points = excluded.points,
-                                        content = excluded.content`
-  ).run(taskId, points, content);
+  getDb()
+    .prepare(
+      `INSERT INTO task_point_overrides (task_id, points, content)
+       VALUES (?, ?, ?)
+       ON CONFLICT(task_id) DO UPDATE SET points = excluded.points,
+                                          content = excluded.content`
+    )
+    .run(taskId, points, content);
   return { ok: true };
 }
 
-// Clear an override (the "Clear" control, and the sync-time cleanup when an
-// override fires). Idempotent.
-export function deleteTaskOverride(taskId: string): {
-  ok: true;
-  deleted: boolean;
-} {
-  const db = getDb();
-  const result = db
+// Whether a Todoist task id is already in processed_completions. Sync dedupes
+// on that id BEFORE looking up an override, so an override on such an id
+// (a reopened-then-recompleted task, or a recurring task whose completions
+// reuse the id) could never pay out — Upcoming hides and refuses those.
+export function isCompletionProcessed(taskId: string): boolean {
+  return !!getDb()
+    .prepare(`SELECT 1 FROM processed_completions WHERE completion_id = ?`)
+    .get(taskId);
+}
+
+// Clear an override. Idempotent.
+export function deleteTaskOverride(taskId: string): { ok: true; deleted: boolean } {
+  const result = getDb()
     .prepare(`DELETE FROM task_point_overrides WHERE task_id = ?`)
     .run(taskId);
   return { ok: true, deleted: result.changes > 0 };
@@ -384,4 +397,23 @@ export function discardPendingReview(completionId: string): { ok: true } {
     completionId
   );
   return { ok: true };
+}
+
+// Discard a batch of queued completions at once ("Discard all" on /review).
+// Only the given ids are deleted — the page sends exactly the items it is
+// showing, so anything auto-sync queued after the page loaded survives. Like a
+// single discard, every completion stays in processed_completions, so none is
+// ever re-queued. Returns how many rows were actually deleted.
+export function discardPendingReviewIds(ids: string[]): {
+  ok: true;
+  discarded: number;
+} {
+  const db = getDb();
+  const del = db.prepare(`DELETE FROM pending_review WHERE completion_id = ?`);
+  const tx = db.transaction((list: string[]) => {
+    let n = 0;
+    for (const id of list) n += del.run(id).changes;
+    return n;
+  });
+  return { ok: true, discarded: tx(ids) };
 }

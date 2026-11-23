@@ -3,7 +3,7 @@ import { ORDER_LISTS, setOrder } from "@/lib/queries";
 
 // POST: persist a manual drag order for one list. Body: { list, order }, where
 // `list` is one of ORDER_LISTS and `order` is the full array of item keys in
-// their new positions. Shared by the rewards / labels / review / upcoming lists.
+// their new positions. Shared by every drag-reorderable list (see ORDER_LISTS).
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as {

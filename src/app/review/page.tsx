@@ -6,22 +6,32 @@ import SortableList from "../SortableList";
 interface ReviewTask {
   completion_id: string;
   content: string;
-  labels: string[];
   completed_at: string | null;
 }
 
 interface TodoistDue {
   date: string;
   string?: string;
-  is_recurring?: boolean;
 }
 
 interface UpcomingTask {
   id: string;
   content: string;
-  labels: string[];
-  due: TodoistDue;
-  points: number | null; // saved override, null if none
+  due: TodoistDue | null; // null: no due date, listed because points are set
+  points: number | null; // points set ahead of time, null if none
+}
+
+// Prefer the natural-language string Todoist stored (e.g. "Nov 25"); fall back
+// to the raw date, read as a LOCAL calendar date (a bare "YYYY-MM-DD" parsed by
+// new Date() would be UTC midnight and show the previous day in the US).
+function formatDue(due: TodoistDue): string {
+  if (due.string) return due.string;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(due.date);
+  if (!m) return due.date;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString(
+    undefined,
+    { month: "short", day: "numeric" }
+  );
 }
 
 function formatDate(iso: string | null): string {
@@ -35,13 +45,6 @@ function formatDate(iso: string | null): string {
   });
 }
 
-// Prefer the natural-language string Todoist stored (e.g. "Jul 8"); fall back to
-// formatting the raw date (avoids the UTC-midnight off-by-one on bare dates).
-function formatDue(due: TodoistDue): string {
-  if (due.string) return due.string;
-  return formatDate(due.date);
-}
-
 export default function ReviewPage() {
   const [tasks, setTasks] = useState<ReviewTask[]>([]);
   const [points, setPoints] = useState<Record<string, string>>({});
@@ -49,27 +52,61 @@ export default function ReviewPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [balance, setBalance] = useState<number | null>(null);
+  // "Discard all" two-step confirm (no native confirm()) + in-flight guard.
+  // Arming the confirm snapshots the ids on screen; only those are discarded,
+  // so anything auto-sync queues while the confirm is open survives.
+  const [confirmingAll, setConfirmingAll] = useState<string[] | null>(null);
+  const [discardingAll, setDiscardingAll] = useState(false);
 
-  // Upcoming (uncompleted, dated) tasks + their manual point pre-assignments.
+  // "Reorder in flight" guard: while true, the sync-driven refetch skips the
+  // list so an in-flight sync can't snap it back to the old order before the
+  // reorder POST persists.
+  const reorderingReview = useRef(false);
+
+  // Assign/discard actions in flight, plus a counter bumped whenever one
+  // starts or settles. A refetch whose response could predate a removal is
+  // dropped rather than applied, so a just-removed row can't come back.
+  // The last action to settle dispatches `todoist:synced`, which reloads once.
+  const pendingActions = useRef(0);
+  const actionGen = useRef(0);
+
+  // Upcoming: open Todoist tasks with a due date + points set ahead of time.
+  // Independent of the Completed list's state and its action guard above: its
+  // saves/clears never touch `tasks`, pendingActions or actionGen.
   const [upcoming, setUpcoming] = useState<UpcomingTask[]>([]);
-  const [upcomingInputs, setUpcomingInputs] = useState<Record<string, string>>(
-    {}
-  );
+  const [upcomingInputs, setUpcomingInputs] = useState<Record<string, string>>({});
   const [upcomingBusy, setUpcomingBusy] = useState<Record<string, boolean>>({});
   const [upcomingLoading, setUpcomingLoading] = useState(true);
   const [upcomingError, setUpcomingError] = useState<string | null>(null);
-
-  // Per-list "reorder in flight" guards (review and upcoming are independent):
-  // while true, the sync-driven refetch skips that list so an in-flight sync
-  // can't snap it back to the old order before the reorder POST persists.
-  const reorderingReview = useRef(false);
   const reorderingUpcoming = useRef(false);
+  // Same stale-response guard as Completed, but separate counters: saves and
+  // clears in flight, plus a generation bumped when one starts or settles. A
+  // refetch that started before (or lands during) a save/clear is dropped, so
+  // it can't show stale points or hide Clear. The last one to settle reloads.
+  const pendingUpcoming = useRef(0);
+  const upcomingGen = useRef(0);
+
+  function beginAction() {
+    pendingActions.current += 1;
+    actionGen.current += 1;
+  }
+
+  function endAction() {
+    pendingActions.current -= 1;
+    actionGen.current += 1;
+    if (pendingActions.current === 0) {
+      // Refreshes this list, the nav badge and any other listener.
+      window.dispatchEvent(new CustomEvent("todoist:synced"));
+    }
+  }
 
   const load = useCallback(async () => {
+    const gen = actionGen.current;
     try {
       const res = await fetch("/api/review");
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to load");
+      if (pendingActions.current > 0 || gen !== actionGen.current) return;
       setTasks(data.tasks ?? []);
     } catch (err) {
       setError((err as Error).message);
@@ -79,14 +116,16 @@ export default function ReviewPage() {
   }, []);
 
   const loadUpcoming = useCallback(async () => {
+    const gen = upcomingGen.current;
     try {
       const res = await fetch("/api/upcoming");
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to load upcoming");
+      if (!res.ok) throw new Error(data.error ?? "Failed to load upcoming tasks");
+      if (pendingUpcoming.current > 0 || gen !== upcomingGen.current) return;
       const list: UpcomingTask[] = data.tasks ?? [];
       setUpcoming(list);
-      // Seed each input from its saved override so values re-display on reload.
-      // Don't clobber an input the user is mid-edit on.
+      // Seed each input from its saved value so it re-displays on reload, but
+      // never clobber an input the user is mid-edit on.
       setUpcomingInputs((prev) => {
         const next = { ...prev };
         for (const t of list) {
@@ -107,8 +146,8 @@ export default function ReviewPage() {
   useEffect(() => {
     load();
     loadUpcoming();
-    // Refetch both lists when the global AutoSync reports new data — but skip a
-    // list that's mid-reorder so the sync can't clobber its optimistic order
+    // Refetch both lists when the global AutoSync reports new data — but skip
+    // a list that's mid-reorder, so the sync can't clobber its optimistic order
     // before the reorder POST persists.
     const onSynced = () => {
       if (!reorderingReview.current) load();
@@ -117,6 +156,84 @@ export default function ReviewPage() {
     window.addEventListener("todoist:synced", onSynced);
     return () => window.removeEventListener("todoist:synced", onSynced);
   }, [load, loadUpcoming]);
+
+  function beginUpcomingAction() {
+    pendingUpcoming.current += 1;
+    upcomingGen.current += 1;
+  }
+
+  function endUpcomingAction() {
+    pendingUpcoming.current -= 1;
+    upcomingGen.current += 1;
+    if (pendingUpcoming.current === 0) loadUpcoming();
+  }
+
+  async function reorderUpcoming(newItems: UpcomingTask[]) {
+    reorderingUpcoming.current = true;
+    setUpcoming(newItems);
+    try {
+      const res = await fetch("/api/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ list: "upcoming", order: newItems.map((t) => t.id) }),
+      });
+      if (!res.ok) throw new Error("Failed to save order");
+    } catch (err) {
+      setUpcomingError((err as Error).message);
+      loadUpcoming();
+    } finally {
+      reorderingUpcoming.current = false;
+    }
+  }
+
+  async function saveUpcoming(task: UpcomingTask) {
+    const raw = upcomingInputs[task.id] ?? "";
+    const n = Number(raw);
+    if (raw.trim() === "" || !Number.isInteger(n) || n < 1 || n > 100000) {
+      setUpcomingError(
+        "Points must be a whole number from 1 to 100000 (use Clear to remove)."
+      );
+      return;
+    }
+    setUpcomingError(null);
+    setUpcomingBusy((prev) => ({ ...prev, [task.id]: true }));
+    beginUpcomingAction();
+    try {
+      const res = await fetch(`/api/upcoming/${encodeURIComponent(task.id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ points: n, content: task.content }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Failed to save");
+      setUpcoming((prev) => prev.map((t) => (t.id === task.id ? { ...t, points: n } : t)));
+    } catch (err) {
+      setUpcomingError((err as Error).message);
+    } finally {
+      setUpcomingBusy((prev) => ({ ...prev, [task.id]: false }));
+      endUpcomingAction();
+    }
+  }
+
+  async function clearUpcoming(id: string) {
+    setUpcomingError(null);
+    setUpcomingBusy((prev) => ({ ...prev, [id]: true }));
+    beginUpcomingAction();
+    try {
+      const res = await fetch(`/api/upcoming/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Failed to clear");
+      setUpcoming((prev) => prev.map((t) => (t.id === id ? { ...t, points: null } : t)));
+      setUpcomingInputs((prev) => ({ ...prev, [id]: "" }));
+    } catch (err) {
+      setUpcomingError((err as Error).message);
+    } finally {
+      setUpcomingBusy((prev) => ({ ...prev, [id]: false }));
+      endUpcomingAction();
+    }
+  }
 
   // Persist a new drag order for the review queue: optimistic, reload-on-failure.
   async function reorderReview(newItems: ReviewTask[]) {
@@ -140,28 +257,6 @@ export default function ReviewPage() {
     }
   }
 
-  // Persist a new drag order for the upcoming list.
-  async function reorderUpcoming(newItems: UpcomingTask[]) {
-    reorderingUpcoming.current = true;
-    setUpcoming(newItems);
-    try {
-      const res = await fetch("/api/reorder", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          list: "upcoming",
-          order: newItems.map((t) => t.id),
-        }),
-      });
-      if (!res.ok) throw new Error("Failed to save order");
-    } catch (err) {
-      setUpcomingError((err as Error).message);
-      loadUpcoming();
-    } finally {
-      reorderingUpcoming.current = false;
-    }
-  }
-
   function setPointValue(id: string, value: string) {
     setPoints((prev) => ({ ...prev, [id]: value }));
   }
@@ -175,8 +270,9 @@ export default function ReviewPage() {
     }
     setError(null);
     setBusy((prev) => ({ ...prev, [id]: true }));
+    beginAction();
     try {
-      const res = await fetch(`/api/review/${id}/award`, {
+      const res = await fetch(`/api/review/${encodeURIComponent(id)}/award`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ points: n }),
@@ -189,14 +285,16 @@ export default function ReviewPage() {
       setError((err as Error).message);
     } finally {
       setBusy((prev) => ({ ...prev, [id]: false }));
+      endAction();
     }
   }
 
   async function discard(id: string) {
     setError(null);
     setBusy((prev) => ({ ...prev, [id]: true }));
+    beginAction();
     try {
-      const res = await fetch(`/api/review/${id}/discard`, { method: "POST" });
+      const res = await fetch(`/api/review/${encodeURIComponent(id)}/discard`, { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to discard");
       setTasks((prev) => prev.filter((t) => t.completion_id !== id));
@@ -204,77 +302,101 @@ export default function ReviewPage() {
       setError((err as Error).message);
     } finally {
       setBusy((prev) => ({ ...prev, [id]: false }));
+      endAction();
     }
   }
 
-  function setUpcomingInput(id: string, value: string) {
-    setUpcomingInputs((prev) => ({ ...prev, [id]: value }));
-  }
+  // The armed snapshot, minus anything assigned or discarded since it was
+  // armed, so the confirm never counts (or sends) an item no longer on screen.
+  const armedIds = confirmingAll?.filter((id) =>
+    tasks.some((t) => t.completion_id === id)
+  );
 
-  async function saveOverride(task: UpcomingTask) {
-    const raw = upcomingInputs[task.id] ?? "";
-    const n = parseInt(raw, 10);
-    if (!Number.isInteger(n) || n < 1 || n > 100000) {
-      setUpcomingError(
-        "Points must be a whole number between 1 and 100000 (use Clear to remove)."
-      );
-      return;
-    }
-    setUpcomingError(null);
-    setUpcomingBusy((prev) => ({ ...prev, [task.id]: true }));
+  // Don't leave a stale confirm armed if its items are all gone.
+  useEffect(() => {
+    if (armedIds?.length === 0) setConfirmingAll(null);
+  }, [armedIds?.length]);
+
+  async function discardAll(ids: string[]) {
+    setError(null);
+    setDiscardingAll(true);
+    beginAction();
     try {
-      const res = await fetch(`/api/upcoming/${task.id}`, {
-        method: "PUT",
+      const res = await fetch("/api/review/discard-all", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ points: n, content: task.content }),
+        body: JSON.stringify({ ids }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to save");
-      setUpcoming((prev) =>
-        prev.map((t) => (t.id === task.id ? { ...t, points: n } : t))
-      );
+      if (!res.ok) throw new Error(data.error ?? "Failed to discard all");
+      setConfirmingAll(null);
+      const discarded = new Set(ids);
+      setTasks((prev) => prev.filter((t) => !discarded.has(t.completion_id)));
     } catch (err) {
-      setUpcomingError((err as Error).message);
+      setError((err as Error).message);
     } finally {
-      setUpcomingBusy((prev) => ({ ...prev, [task.id]: false }));
-    }
-  }
-
-  async function clearOverride(id: string) {
-    setUpcomingError(null);
-    setUpcomingBusy((prev) => ({ ...prev, [id]: true }));
-    try {
-      const res = await fetch(`/api/upcoming/${id}`, { method: "DELETE" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to clear");
-      setUpcoming((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, points: null } : t))
-      );
-      setUpcomingInputs((prev) => ({ ...prev, [id]: "" }));
-    } catch (err) {
-      setUpcomingError((err as Error).message);
-    } finally {
-      setUpcomingBusy((prev) => ({ ...prev, [id]: false }));
+      setDiscardingAll(false);
+      endAction();
     }
   }
 
   return (
     <div className="space-y-10">
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold">Review</h1>
-          {balance !== null && (
-            <span className="text-sm text-slate-400">
-              Balance:{" "}
-              <span className="font-semibold text-emerald-400">{balance}</span>{" "}
-              pts
-            </span>
-          )}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold">Review</h1>
+        {balance !== null && (
+          <span className="whitespace-nowrap text-sm text-slate-400">
+            Balance:{" "}
+            <span className="font-semibold text-emerald-400">{balance}</span>{" "}
+            pts
+          </span>
+        )}
+      </div>
+
+      {/* Completed: the review queue. "Discard all" belongs to this section
+          only and only ever touches pending_review. */}
+      <section className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-xl font-bold">Completed</h2>
+          <div className="flex flex-wrap items-center gap-3">
+            {tasks.length > 0 &&
+              (armedIds && armedIds.length > 0 ? (
+                <div className="flex items-center gap-2">
+                  <span className="whitespace-nowrap text-sm text-slate-300">
+                    Discard all {armedIds.length}?
+                  </span>
+                  <button
+                    onClick={() => discardAll(armedIds)}
+                    disabled={discardingAll}
+                    className="shrink-0 whitespace-nowrap rounded-md border border-rose-900 px-3 py-2 text-xs text-rose-400 hover:bg-rose-950 disabled:opacity-40 sm:py-1.5"
+                  >
+                    {discardingAll ? "Discarding…" : "Confirm"}
+                  </button>
+                  <button
+                    onClick={() => setConfirmingAll(null)}
+                    disabled={discardingAll}
+                    className="shrink-0 whitespace-nowrap rounded-md border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40 sm:py-1.5"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() =>
+                    setConfirmingAll(tasks.map((t) => t.completion_id))
+                  }
+                  className="shrink-0 whitespace-nowrap rounded-md border border-rose-900 px-3 py-2 text-xs text-rose-400 hover:bg-rose-950 sm:py-1.5"
+                >
+                  Discard all ({tasks.length})
+                </button>
+              ))}
+          </div>
         </div>
 
         <p className="text-sm text-slate-400">
-          Completed tasks that earned no points — assign a value or discard.
-          Enter 0 to discard. Discarded tasks won’t come back.
+          Tasks you complete in Todoist land here, unless you set their points
+          ahead of time under Upcoming. Assign each one a point value, or discard
+          it (entering 0 also discards). Discarded tasks won’t come back.
         </p>
 
         {loading && <p className="text-slate-500">Loading…</p>}
@@ -299,21 +421,11 @@ export default function ReviewPage() {
                   <div className="break-words text-sm text-slate-100">
                     {t.content}
                   </div>
-                  <div className="mt-1 flex flex-wrap items-center gap-2">
-                    {t.labels.map((label) => (
-                      <span
-                        key={label}
-                        className="rounded-full border border-slate-700 bg-slate-800 px-2 py-0.5 text-xs text-slate-300"
-                      >
-                        {label}
-                      </span>
-                    ))}
-                    {t.completed_at && (
-                      <span className="whitespace-nowrap text-xs text-slate-500">
-                        {formatDate(t.completed_at)}
-                      </span>
-                    )}
-                  </div>
+                  {t.completed_at && (
+                    <div className="mt-1 whitespace-nowrap text-xs text-slate-500">
+                      {formatDate(t.completed_at)}
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 sm:shrink-0">
                   {/* The intro paragraph already says "Enter 0 to discard", so
@@ -352,26 +464,25 @@ export default function ReviewPage() {
             )}
           />
         )}
-      </div>
+      </section>
 
-      {/* Upcoming: pre-assign a point value to uncompleted, dated tasks. The
-          saved value is awarded (overriding label points) when the task is
-          completed. */}
-      <div className="space-y-6">
+      {/* Upcoming: open Todoist tasks with a due date. Points saved here are
+          paid out automatically when the task is completed. */}
+      <section className="space-y-4">
         <h2 className="text-xl font-bold">Upcoming</h2>
         <p className="text-sm text-slate-400">
-          Uncompleted tasks with a due date. Pre-assign a point value and it’s
-          remembered — when the task is completed it awards exactly that,{" "}
-          <span className="text-slate-300">overriding</span> its label points.
-          Use Clear to fall back to label-based points.
+          Open Todoist tasks with a due date (and any open task you’ve already
+          set points for). Set points ahead of time and
+          they’re paid out automatically when you complete the task — it skips
+          the Completed list. Use Clear to remove the points.
         </p>
 
         {upcomingLoading && <p className="text-slate-500">Loading…</p>}
         {upcomingError && <p className="text-rose-400">{upcomingError}</p>}
 
-        {!upcomingLoading && upcoming.length === 0 && (
+        {!upcomingLoading && upcoming.length === 0 && !upcomingError && (
           <div className="rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-10 text-center text-sm text-slate-400">
-            No upcoming dated tasks.
+            No open tasks with a due date.
           </div>
         )}
 
@@ -385,24 +496,20 @@ export default function ReviewPage() {
             renderItem={(t) => (
               <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-4">
                 <div className="min-w-0 sm:flex-1">
-                  <div className="break-words text-sm text-slate-100">
-                    {t.content}
-                  </div>
+                  <div className="break-words text-sm text-slate-100">{t.content}</div>
                   <div className="mt-1 flex flex-wrap items-center gap-2">
-                    <span className="whitespace-nowrap rounded-full border border-emerald-900 bg-emerald-950/40 px-2 py-0.5 text-xs text-emerald-300">
-                      Due {formatDue(t.due)}
-                    </span>
-                    {t.labels.map((label) => (
-                      <span
-                        key={label}
-                        className="rounded-full border border-slate-700 bg-slate-800 px-2 py-0.5 text-xs text-slate-300"
-                      >
-                        {label}
+                    {t.due ? (
+                      <span className="whitespace-nowrap rounded-full border border-emerald-900 bg-emerald-950/40 px-2 py-0.5 text-xs text-emerald-300">
+                        Due {formatDue(t.due)}
                       </span>
-                    ))}
+                    ) : (
+                      <span className="whitespace-nowrap rounded-full border border-slate-700 bg-slate-800 px-2 py-0.5 text-xs text-slate-300">
+                        No due date
+                      </span>
+                    )}
                     {t.points != null && (
                       <span className="whitespace-nowrap text-xs font-medium text-emerald-400">
-                        Pre-assigned: {t.points} pts
+                        Set: {t.points} pts
                       </span>
                     )}
                   </div>
@@ -411,24 +518,28 @@ export default function ReviewPage() {
                   <input
                     type="number"
                     min={1}
+                    max={100000}
                     placeholder="pts"
+                    aria-label={`Points for ${t.content}`}
                     value={upcomingInputs[t.id] ?? ""}
-                    onChange={(e) => setUpcomingInput(t.id, e.target.value)}
+                    onChange={(e) =>
+                      setUpcomingInputs((prev) => ({ ...prev, [t.id]: e.target.value }))
+                    }
                     disabled={upcomingBusy[t.id]}
                     className="w-24 shrink-0 rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-right text-base text-white focus:border-emerald-500 focus:outline-none disabled:opacity-50 sm:w-20 sm:text-sm"
                   />
                   <button
-                    onClick={() => saveOverride(t)}
+                    onClick={() => saveUpcoming(t)}
                     disabled={upcomingBusy[t.id]}
-                    className="shrink-0 whitespace-nowrap rounded-md bg-emerald-600 px-3 py-2 text-xs sm:py-1.5 font-semibold text-white hover:bg-emerald-500 disabled:opacity-40"
+                    className="shrink-0 whitespace-nowrap rounded-md bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-40 sm:py-1.5"
                   >
                     Save
                   </button>
                   {t.points != null && (
                     <button
-                      onClick={() => clearOverride(t.id)}
+                      onClick={() => clearUpcoming(t.id)}
                       disabled={upcomingBusy[t.id]}
-                      className="shrink-0 whitespace-nowrap rounded-md border border-slate-700 px-3 py-2 text-xs sm:py-1.5 text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+                      className="shrink-0 whitespace-nowrap rounded-md border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40 sm:py-1.5"
                     >
                       Clear
                     </button>
@@ -438,7 +549,7 @@ export default function ReviewPage() {
             )}
           />
         )}
-      </div>
+      </section>
     </div>
   );
 }
