@@ -273,3 +273,13 @@ export function discardPendingReview(completionId: string): { ok: true } {
   );
   return { ok: true };
 }
+
+// Discard the whole review queue at once. Like a single discard, every
+// completion stays in processed_completions, so none is ever re-queued.
+export function discardAllPendingReview(): { ok: true; discarded: number } {
+  const db = getDb();
+  const tx = db.transaction(
+    () => db.prepare(`DELETE FROM pending_review`).run().changes
+  );
+  return { ok: true, discarded: tx() };
+}

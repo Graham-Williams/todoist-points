@@ -27,6 +27,9 @@ export default function ReviewPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [balance, setBalance] = useState<number | null>(null);
+  // "Discard all" two-step confirm (no native confirm()) + in-flight guard.
+  const [confirmingAll, setConfirmingAll] = useState(false);
+  const [discardingAll, setDiscardingAll] = useState(false);
 
   // "Reorder in flight" guard: while true, the sync-driven refetch skips the
   // list so an in-flight sync can't snap it back to the old order before the
@@ -124,17 +127,71 @@ export default function ReviewPage() {
     }
   }
 
+  // Don't leave a stale confirm armed if the queue empties some other way.
+  useEffect(() => {
+    if (tasks.length === 0) setConfirmingAll(false);
+  }, [tasks.length]);
+
+  async function discardAll() {
+    setError(null);
+    setDiscardingAll(true);
+    try {
+      const res = await fetch("/api/review/discard-all", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to discard all");
+      setConfirmingAll(false);
+      await load();
+      // Lets the nav badge (and any other listener) refresh immediately.
+      window.dispatchEvent(new CustomEvent("todoist:synced"));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setDiscardingAll(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">Review</h1>
-        {balance !== null && (
-          <span className="text-sm text-slate-400">
-            Balance:{" "}
-            <span className="font-semibold text-emerald-400">{balance}</span>{" "}
-            pts
-          </span>
-        )}
+        <div className="flex flex-wrap items-center gap-3">
+          {balance !== null && (
+            <span className="whitespace-nowrap text-sm text-slate-400">
+              Balance:{" "}
+              <span className="font-semibold text-emerald-400">{balance}</span>{" "}
+              pts
+            </span>
+          )}
+          {tasks.length > 0 &&
+            (confirmingAll ? (
+              <div className="flex items-center gap-2">
+                <span className="whitespace-nowrap text-sm text-slate-300">
+                  Discard all {tasks.length}?
+                </span>
+                <button
+                  onClick={discardAll}
+                  disabled={discardingAll}
+                  className="shrink-0 whitespace-nowrap rounded-md border border-rose-900 px-3 py-2 text-xs text-rose-400 hover:bg-rose-950 disabled:opacity-40 sm:py-1.5"
+                >
+                  {discardingAll ? "Discarding…" : "Confirm"}
+                </button>
+                <button
+                  onClick={() => setConfirmingAll(false)}
+                  disabled={discardingAll}
+                  className="shrink-0 whitespace-nowrap rounded-md border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40 sm:py-1.5"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmingAll(true)}
+                className="shrink-0 whitespace-nowrap rounded-md border border-rose-900 px-3 py-2 text-xs text-rose-400 hover:bg-rose-950 sm:py-1.5"
+              >
+                Discard all ({tasks.length})
+              </button>
+            ))}
+        </div>
       </div>
 
       <p className="text-sm text-slate-400">
