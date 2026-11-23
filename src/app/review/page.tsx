@@ -79,6 +79,12 @@ export default function ReviewPage() {
   const [upcomingLoading, setUpcomingLoading] = useState(true);
   const [upcomingError, setUpcomingError] = useState<string | null>(null);
   const reorderingUpcoming = useRef(false);
+  // Same stale-response guard as Completed, but separate counters: saves and
+  // clears in flight, plus a generation bumped when one starts or settles. A
+  // refetch that started before (or lands during) a save/clear is dropped, so
+  // it can't show stale points or hide Clear. The last one to settle reloads.
+  const pendingUpcoming = useRef(0);
+  const upcomingGen = useRef(0);
 
   function beginAction() {
     pendingActions.current += 1;
@@ -110,10 +116,12 @@ export default function ReviewPage() {
   }, []);
 
   const loadUpcoming = useCallback(async () => {
+    const gen = upcomingGen.current;
     try {
       const res = await fetch("/api/upcoming");
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to load upcoming tasks");
+      if (pendingUpcoming.current > 0 || gen !== upcomingGen.current) return;
       const list: UpcomingTask[] = data.tasks ?? [];
       setUpcoming(list);
       // Seed each input from its saved value so it re-displays on reload, but
@@ -149,6 +157,17 @@ export default function ReviewPage() {
     return () => window.removeEventListener("todoist:synced", onSynced);
   }, [load, loadUpcoming]);
 
+  function beginUpcomingAction() {
+    pendingUpcoming.current += 1;
+    upcomingGen.current += 1;
+  }
+
+  function endUpcomingAction() {
+    pendingUpcoming.current -= 1;
+    upcomingGen.current += 1;
+    if (pendingUpcoming.current === 0) loadUpcoming();
+  }
+
   async function reorderUpcoming(newItems: UpcomingTask[]) {
     reorderingUpcoming.current = true;
     setUpcoming(newItems);
@@ -178,6 +197,7 @@ export default function ReviewPage() {
     }
     setUpcomingError(null);
     setUpcomingBusy((prev) => ({ ...prev, [task.id]: true }));
+    beginUpcomingAction();
     try {
       const res = await fetch(`/api/upcoming/${encodeURIComponent(task.id)}`, {
         method: "PUT",
@@ -191,12 +211,14 @@ export default function ReviewPage() {
       setUpcomingError((err as Error).message);
     } finally {
       setUpcomingBusy((prev) => ({ ...prev, [task.id]: false }));
+      endUpcomingAction();
     }
   }
 
   async function clearUpcoming(id: string) {
     setUpcomingError(null);
     setUpcomingBusy((prev) => ({ ...prev, [id]: true }));
+    beginUpcomingAction();
     try {
       const res = await fetch(`/api/upcoming/${encodeURIComponent(id)}`, {
         method: "DELETE",
@@ -209,6 +231,7 @@ export default function ReviewPage() {
       setUpcomingError((err as Error).message);
     } finally {
       setUpcomingBusy((prev) => ({ ...prev, [id]: false }));
+      endUpcomingAction();
     }
   }
 
