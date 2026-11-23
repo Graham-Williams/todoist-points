@@ -38,11 +38,34 @@ export default function ReviewPage() {
   // reorder POST persists.
   const reorderingReview = useRef(false);
 
+  // Assign/discard actions in flight, plus a counter bumped whenever one
+  // starts or settles. A refetch whose response could predate a removal is
+  // dropped rather than applied, so a just-removed row can't come back.
+  // The last action to settle dispatches `todoist:synced`, which reloads once.
+  const pendingActions = useRef(0);
+  const actionGen = useRef(0);
+
+  function beginAction() {
+    pendingActions.current += 1;
+    actionGen.current += 1;
+  }
+
+  function endAction() {
+    pendingActions.current -= 1;
+    actionGen.current += 1;
+    if (pendingActions.current === 0) {
+      // Refreshes this list, the nav badge and any other listener.
+      window.dispatchEvent(new CustomEvent("todoist:synced"));
+    }
+  }
+
   const load = useCallback(async () => {
+    const gen = actionGen.current;
     try {
       const res = await fetch("/api/review");
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to load");
+      if (pendingActions.current > 0 || gen !== actionGen.current) return;
       setTasks(data.tasks ?? []);
     } catch (err) {
       setError((err as Error).message);
@@ -97,6 +120,7 @@ export default function ReviewPage() {
     }
     setError(null);
     setBusy((prev) => ({ ...prev, [id]: true }));
+    beginAction();
     try {
       const res = await fetch(`/api/review/${id}/award`, {
         method: "POST",
@@ -107,27 +131,28 @@ export default function ReviewPage() {
       if (!res.ok) throw new Error(data.error ?? "Failed to assign points");
       setBalance(data.newBalance ?? null);
       setTasks((prev) => prev.filter((t) => t.completion_id !== id));
-      window.dispatchEvent(new CustomEvent("todoist:synced"));
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setBusy((prev) => ({ ...prev, [id]: false }));
+      endAction();
     }
   }
 
   async function discard(id: string) {
     setError(null);
     setBusy((prev) => ({ ...prev, [id]: true }));
+    beginAction();
     try {
       const res = await fetch(`/api/review/${id}/discard`, { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to discard");
       setTasks((prev) => prev.filter((t) => t.completion_id !== id));
-      window.dispatchEvent(new CustomEvent("todoist:synced"));
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setBusy((prev) => ({ ...prev, [id]: false }));
+      endAction();
     }
   }
 
@@ -145,6 +170,7 @@ export default function ReviewPage() {
   async function discardAll(ids: string[]) {
     setError(null);
     setDiscardingAll(true);
+    beginAction();
     try {
       const res = await fetch("/api/review/discard-all", {
         method: "POST",
@@ -154,13 +180,13 @@ export default function ReviewPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to discard all");
       setConfirmingAll(null);
-      await load();
-      // Lets the nav badge (and any other listener) refresh immediately.
-      window.dispatchEvent(new CustomEvent("todoist:synced"));
+      const discarded = new Set(ids);
+      setTasks((prev) => prev.filter((t) => !discarded.has(t.completion_id)));
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setDiscardingAll(false);
+      endAction();
     }
   }
 
