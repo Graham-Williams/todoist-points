@@ -1,11 +1,33 @@
 import { NextResponse } from "next/server";
-import { discardAllPendingReview } from "@/lib/queries";
+import { discardPendingReviewIds } from "@/lib/queries";
 
-// POST: discard every queued completion without awarding points. They stay in
-// processed_completions so none is re-queued on the next sync.
-export async function POST() {
+const MAX_IDS = 5000;
+const MAX_ID_LEN = 200;
+
+// POST { ids: string[] }: discard exactly these queued completions (the ones
+// the review page is showing) without awarding points. Items queued by a sync
+// after the page loaded are not in the list, so they survive. All ids stay in
+// processed_completions, so none is re-queued. Returns the count discarded.
+export async function POST(req: Request) {
   try {
-    const { discarded } = discardAllPendingReview();
+    const body = (await req.json().catch(() => ({}))) as { ids?: unknown };
+    const ids = body.ids;
+    if (
+      !Array.isArray(ids) ||
+      ids.length === 0 ||
+      ids.length > MAX_IDS ||
+      !ids.every(
+        (id) => typeof id === "string" && id.length > 0 && id.length <= MAX_ID_LEN
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error: `ids must be a non-empty array of up to ${MAX_IDS} strings (each at most ${MAX_ID_LEN} characters)`,
+        },
+        { status: 400 }
+      );
+    }
+    const { discarded } = discardPendingReviewIds(ids as string[]);
     return NextResponse.json({ ok: true, discarded });
   } catch (err) {
     console.error(err);

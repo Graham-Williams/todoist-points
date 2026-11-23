@@ -28,7 +28,9 @@ export default function ReviewPage() {
   const [error, setError] = useState<string | null>(null);
   const [balance, setBalance] = useState<number | null>(null);
   // "Discard all" two-step confirm (no native confirm()) + in-flight guard.
-  const [confirmingAll, setConfirmingAll] = useState(false);
+  // Arming the confirm snapshots the ids on screen; only those are discarded,
+  // so anything auto-sync queues while the confirm is open survives.
+  const [confirmingAll, setConfirmingAll] = useState<string[] | null>(null);
   const [discardingAll, setDiscardingAll] = useState(false);
 
   // "Reorder in flight" guard: while true, the sync-driven refetch skips the
@@ -129,17 +131,21 @@ export default function ReviewPage() {
 
   // Don't leave a stale confirm armed if the queue empties some other way.
   useEffect(() => {
-    if (tasks.length === 0) setConfirmingAll(false);
+    if (tasks.length === 0) setConfirmingAll(null);
   }, [tasks.length]);
 
-  async function discardAll() {
+  async function discardAll(ids: string[]) {
     setError(null);
     setDiscardingAll(true);
     try {
-      const res = await fetch("/api/review/discard-all", { method: "POST" });
+      const res = await fetch("/api/review/discard-all", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to discard all");
-      setConfirmingAll(false);
+      setConfirmingAll(null);
       await load();
       // Lets the nav badge (and any other listener) refresh immediately.
       window.dispatchEvent(new CustomEvent("todoist:synced"));
@@ -166,17 +172,17 @@ export default function ReviewPage() {
             (confirmingAll ? (
               <div className="flex items-center gap-2">
                 <span className="whitespace-nowrap text-sm text-slate-300">
-                  Discard all {tasks.length}?
+                  Discard all {confirmingAll.length}?
                 </span>
                 <button
-                  onClick={discardAll}
+                  onClick={() => discardAll(confirmingAll)}
                   disabled={discardingAll}
                   className="shrink-0 whitespace-nowrap rounded-md border border-rose-900 px-3 py-2 text-xs text-rose-400 hover:bg-rose-950 disabled:opacity-40 sm:py-1.5"
                 >
                   {discardingAll ? "Discarding…" : "Confirm"}
                 </button>
                 <button
-                  onClick={() => setConfirmingAll(false)}
+                  onClick={() => setConfirmingAll(null)}
                   disabled={discardingAll}
                   className="shrink-0 whitespace-nowrap rounded-md border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40 sm:py-1.5"
                 >
@@ -185,7 +191,9 @@ export default function ReviewPage() {
               </div>
             ) : (
               <button
-                onClick={() => setConfirmingAll(true)}
+                onClick={() =>
+                  setConfirmingAll(tasks.map((t) => t.completion_id))
+                }
                 className="shrink-0 whitespace-nowrap rounded-md border border-rose-900 px-3 py-2 text-xs text-rose-400 hover:bg-rose-950 sm:py-1.5"
               >
                 Discard all ({tasks.length})
