@@ -92,6 +92,38 @@ function initSchema(db: Database.Database) {
       note       TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- Daily habits (see src/lib/habits.ts). "Remove" sets archived_at (soft
+    -- delete) so past checks and their ledger rows keep their history.
+    CREATE TABLE IF NOT EXISTS habits (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT NOT NULL,
+      points      INTEGER NOT NULL,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      archived_at TEXT
+    );
+
+    -- One row per habit ticked on a client-local calendar date (YYYY-MM-DD).
+    -- ledger_id is the 'earn' row it created (it may since have been removed
+    -- from the dashboard; unticking tolerates that).
+    CREATE TABLE IF NOT EXISTS habit_checks (
+      habit_id INTEGER NOT NULL,
+      date     TEXT NOT NULL,
+      ledger_id INTEGER,
+      PRIMARY KEY (habit_id, date)
+    );
+
+    -- The "all habits done" bonus awarded for a date, and its ledger row.
+    CREATE TABLE IF NOT EXISTS habit_bonus (
+      date      TEXT PRIMARY KEY,
+      ledger_id INTEGER
+    );
+
+    -- Small key/value settings (e.g. habit_bonus_points).
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
 }
 
