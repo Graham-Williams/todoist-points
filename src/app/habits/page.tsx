@@ -67,6 +67,13 @@ export default function HabitsPage() {
   // held back (they could briefly revert a cell whose PUT hasn't landed); the
   // last toggle to finish dispatches `todoist:synced`, which reloads once.
   const pendingToggles = useRef(0);
+  // Cells (habit|date) with a request in flight. Each is disabled until its
+  // request settles, so a double-tap can't send PUT and DELETE concurrently
+  // and have them land out of order; other cells stay usable.
+  // The ref is the synchronous guard (two clicks can arrive before a
+  // re-render); the state drives the disabled styling.
+  const busyRef = useRef<Set<string>>(new Set());
+  const [busyCells, setBusyCells] = useState<Set<string>>(new Set());
   const reordering = useRef(false);
 
   const load = useCallback(async () => {
@@ -104,7 +111,14 @@ export default function HabitsPage() {
 
   async function toggle(habit: Habit, date: string) {
     const key = checkKey(habit.id, date);
+    if (busyRef.current.has(key)) return;
     const wasDone = checks.has(key);
+    const setBusy = (busy: boolean) => {
+      if (busy) busyRef.current.add(key);
+      else busyRef.current.delete(key);
+      setBusyCells(new Set(busyRef.current));
+    };
+    setBusy(true);
     const flip = (done: boolean) =>
       setChecks((prev) => {
         const next = new Set(prev);
@@ -125,6 +139,7 @@ export default function HabitsPage() {
       flip(wasDone); // revert
       setError((err as Error).message);
     } finally {
+      setBusy(false);
       pendingToggles.current -= 1;
       if (pendingToggles.current === 0) {
         // Refresh this grid (bonus row) and the balance everywhere else.
@@ -368,15 +383,18 @@ export default function HabitsPage() {
                   <div className={`flex self-end sm:shrink-0 sm:self-auto ${CELLS_GAP}`}>
                     {days.map((d) => {
                       const done = checks.has(checkKey(h.id, d));
+                      const busy = busyCells.has(checkKey(h.id, d));
                       const isToday = d === today;
                       return (
                         <button
                           key={d}
                           type="button"
                           onClick={() => toggle(h, d)}
+                          disabled={busy}
+                          aria-busy={busy}
                           aria-pressed={done}
                           aria-label={`${h.name} on ${d}${done ? " (done)" : ""}`}
-                          className={`${CELL} flex items-center justify-center rounded-md border text-lg font-bold transition-colors ${
+                          className={`${CELL} flex items-center justify-center rounded-md border text-lg font-bold transition-colors disabled:cursor-wait disabled:opacity-60 ${
                             done
                               ? "border-emerald-500 bg-emerald-600 text-white hover:bg-emerald-500"
                               : `bg-slate-800/40 text-transparent hover:bg-slate-800 ${
