@@ -17,7 +17,7 @@ interface TodoistDue {
 interface UpcomingTask {
   id: string;
   content: string;
-  due: TodoistDue;
+  due: TodoistDue | null; // null: no due date, listed because points are set
   points: number | null; // points set ahead of time, null if none
 }
 
@@ -471,7 +471,8 @@ export default function ReviewPage() {
       <section className="space-y-4">
         <h2 className="text-xl font-bold">Upcoming</h2>
         <p className="text-sm text-slate-400">
-          Open Todoist tasks with a due date. Set points ahead of time and
+          Open Todoist tasks with a due date (and any open task you’ve already
+          set points for). Set points ahead of time and
           they’re paid out automatically when you complete the task — it skips
           the Completed list. Use Clear to remove the points.
         </p>
@@ -497,9 +498,15 @@ export default function ReviewPage() {
                 <div className="min-w-0 sm:flex-1">
                   <div className="break-words text-sm text-slate-100">{t.content}</div>
                   <div className="mt-1 flex flex-wrap items-center gap-2">
-                    <span className="whitespace-nowrap rounded-full border border-emerald-900 bg-emerald-950/40 px-2 py-0.5 text-xs text-emerald-300">
-                      Due {formatDue(t.due)}
-                    </span>
+                    {t.due ? (
+                      <span className="whitespace-nowrap rounded-full border border-emerald-900 bg-emerald-950/40 px-2 py-0.5 text-xs text-emerald-300">
+                        Due {formatDue(t.due)}
+                      </span>
+                    ) : (
+                      <span className="whitespace-nowrap rounded-full border border-slate-700 bg-slate-800 px-2 py-0.5 text-xs text-slate-300">
+                        No due date
+                      </span>
+                    )}
                     {t.points != null && (
                       <span className="whitespace-nowrap text-xs font-medium text-emerald-400">
                         Set: {t.points} pts

@@ -53,6 +53,15 @@ test("GET lists only due-dated tasks, with saved points and no labels, in drag o
   ]);
 });
 
+test("an undated task with saved points is listed (due null); one without isn't", async () => {
+  await put("b", { points: 30, content: "Undated B" });
+  const tasks = (await (await GET()).json()).tasks as { id: string; due: unknown; points: number | null }[];
+  assert.deepEqual(tasks.find((t) => t.id === "b"), { id: "b", content: "Undated B", due: null, points: 30 });
+  await one.DELETE(new Request("http://localhost"), ctx("b"));
+  const after = (await (await GET()).json()).tasks as { id: string }[];
+  assert.equal(after.some((t) => t.id === "b"), false);
+});
+
 test("GET hides recurring tasks and tasks already processed by sync", async () => {
   getDb().prepare(`INSERT INTO processed_completions (completion_id) VALUES ('done-before')`).run();
   const ids = ((await (await GET()).json()).tasks as { id: string }[]).map((t) => t.id);

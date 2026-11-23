@@ -39,23 +39,27 @@ export interface TodoistDue {
   // Todoist also sends lang, timezone, etc.; /api/upcoming drops them.
 }
 
-export interface ActiveDatedTask {
+export interface UpcomingTask {
   id: string;
   content: string;
-  due: TodoistDue;
+  due: TodoistDue | null;
 }
 
-// Active (uncompleted) tasks that have a due date, for the Review page's
-// Upcoming section. `GET /tasks` paginates with { results, next_cursor }; we
-// keep only tasks whose `due` object is present.
+// Active (uncompleted) tasks for the Review page's Upcoming section: every task
+// that has a due date, PLUS any task whose id is in `keepIds` even without one
+// (the ids with points already saved, so an override on a task whose due date
+// was later removed stays visible and clearable). `GET /tasks` paginates with
+// { results, next_cursor }.
 //
 // ID LINKAGE (verified empirically 2026-07-08): the `id` returned here is the
 // SAME id that later appears as `id` on the corresponding completed item from
 // /tasks/completed/by_completion_date (that endpoint returns the full task
 // object; there is no separate task_id). So an override keyed on this `id`
 // matches a completion directly on `completedTask.id`. See the sync route.
-export async function getActiveDatedTasks(): Promise<ActiveDatedTask[]> {
-  const out: ActiveDatedTask[] = [];
+export async function getUpcomingTasks(
+  keepIds: ReadonlySet<string>
+): Promise<UpcomingTask[]> {
+  const out: UpcomingTask[] = [];
   let cursor: string | undefined;
   do {
     const params: Record<string, string> = { limit: "200" };
@@ -65,7 +69,9 @@ export async function getActiveDatedTasks(): Promise<ActiveDatedTask[]> {
       next_cursor: string | null;
     };
     for (const t of page.results ?? []) {
-      if (t.due) out.push({ id: t.id, content: t.content, due: t.due });
+      if (t.due || keepIds.has(t.id)) {
+        out.push({ id: t.id, content: t.content, due: t.due ?? null });
+      }
     }
     cursor = page.next_cursor ?? undefined;
   } while (cursor);
