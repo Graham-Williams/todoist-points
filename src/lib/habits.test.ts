@@ -151,6 +151,7 @@ test("POST /api/habits validates name and points", async () => {
   ]) {
     assert.equal((await list.POST(json("POST", body))).status, 400, JSON.stringify(body));
   }
+  assert.equal((await list.POST(json("POST", null))).status, 400);
   const res = await list.POST(json("POST", { name: "  Walk  ", points: 5 }));
   assert.equal(res.status, 200);
   assert.equal((await res.json()).habit.name, "Walk");
@@ -194,6 +195,7 @@ test("PUT /api/habits/bonus validates [0, 100000]", async () => {
   for (const bad of [-1, 100001, 2.5, "", null, true]) {
     assert.equal((await bonus.PUT(json("PUT", { points: bad }))).status, 400, String(bad));
   }
+  assert.equal((await bonus.PUT(json("PUT", null))).status, 400);
   const res = await bonus.PUT(json("PUT", { points: 0 }));
   assert.deepEqual(await res.json(), { ok: true, bonusPoints: 0 });
   assert.equal(h.getBonusPoints(), 0);

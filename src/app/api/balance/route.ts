@@ -7,7 +7,7 @@ import { parseIntInRange } from "@/lib/validate";
 // dashboard history); ledger rows and lifetime totals are untouched.
 export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => ({}))) as { balance?: unknown };
+    const body = ((await req.json().catch(() => null)) ?? {}) as { balance?: unknown };
     // parseIntInRange refuses null/""/booleans/arrays, which Number() would
     // silently coerce to 0 or 1 and so reset the balance.
     const target = parseIntInRange(body.balance, 0, BALANCE_MAX);

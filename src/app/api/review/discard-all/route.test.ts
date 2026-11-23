@@ -60,7 +60,7 @@ test("invalid bodies are rejected with 400 and delete nothing", async () => {
   for (const bad of [
     {}, { ids: [] }, { ids: "keep" }, { ids: [1] }, { ids: [""] }, { ids: [null] },
     { ids: ["x".repeat(201)] }, { ids: Array.from({ length: 5001 }, (_, i) => `id${i}`) },
-    "not json",
+    "not json", "null",
   ]) {
     const res = await post(bad);
     assert.equal(res.status, 400, JSON.stringify(bad).slice(0, 60));

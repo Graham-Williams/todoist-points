@@ -6,7 +6,7 @@ import { parseIntInRange } from "@/lib/validate";
 // Applies to bonuses awarded from now on; past bonuses keep their value.
 export async function PUT(req: Request) {
   try {
-    const body = (await req.json().catch(() => ({}))) as { points?: unknown };
+    const body = ((await req.json().catch(() => null)) ?? {}) as { points?: unknown };
     const points = parseIntInRange(body.points, 0, BONUS_POINTS_MAX);
     if (points === null) {
       return NextResponse.json(

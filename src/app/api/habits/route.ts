@@ -42,7 +42,7 @@ export async function GET(req: Request) {
 // integer in [1, 100000].
 export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => ({}))) as {
+    const body = ((await req.json().catch(() => null)) ?? {}) as {
       name?: unknown;
       points?: unknown;
     };

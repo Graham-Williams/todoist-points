@@ -71,6 +71,7 @@ test("invalid targets are rejected with 400 and change nothing", async () => {
   }
   const res = await POST(new Request("http://localhost/api/balance", { method: "POST", body: "not json" }));
   assert.equal(res.status, 400);
+  assert.equal((await POST(new Request("http://localhost/api/balance", { method: "POST", body: "null" }))).status, 400);
   assert.equal(q.getBalance(), 5);
   // Boundaries are accepted.
   assert.equal((await POST(post({ balance: 1000000 }))).status, 200);

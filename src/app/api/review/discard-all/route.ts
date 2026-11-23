@@ -10,7 +10,7 @@ const MAX_ID_LEN = 200;
 // processed_completions, so none is re-queued. Returns the count discarded.
 export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => ({}))) as { ids?: unknown };
+    const body = ((await req.json().catch(() => null)) ?? {}) as { ids?: unknown };
     const ids = body.ids;
     if (
       !Array.isArray(ids) ||
