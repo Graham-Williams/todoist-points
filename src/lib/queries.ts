@@ -32,12 +32,22 @@ export interface RecentEarning {
   title: string;
 }
 
+// One row of the dashboard "Spending & adjustments" history: a reward
+// redemption (negative ledger row) or a manual balance adjustment.
+export interface HistoryEntry {
+  kind: "redeem" | "adjust";
+  id: number;
+  points: number; // signed: redemptions negative, adjustments +/- delta
+  description: string | null;
+  created_at: string;
+}
+
 export interface DashboardStats {
   balance: number;
   totalEarned: number;
   totalSpent: number;
   recentEarnings: RecentEarning[];
-  redemptions: LedgerEntry[];
+  history: HistoryEntry[];
 }
 
 export function getStats(): DashboardStats {
@@ -68,28 +78,68 @@ export function getStats(): DashboardStats {
     title: earningTitle(e.description),
   }));
 
-  const redemptions = db
+  const history = db
     .prepare(
-      `SELECT * FROM ledger WHERE type = 'redeem' ORDER BY id DESC LIMIT 20`
+      `SELECT 'redeem' AS kind, id, points, description, created_at
+         FROM ledger WHERE type = 'redeem'
+       UNION ALL
+       SELECT 'adjust' AS kind, id, delta AS points, note AS description, created_at
+         FROM balance_adjustments
+       ORDER BY created_at DESC, id DESC
+       LIMIT 20`
     )
-    .all() as LedgerEntry[];
+    .all() as HistoryEntry[];
 
   return {
-    balance: earned + spent,
+    balance: getBalance(),
     totalEarned: earned,
-    totalSpent: -spent,
+    totalSpent: spent === 0 ? 0 : -spent,
     recentEarnings,
-    redemptions,
+    history,
   };
 }
 
+// THE balance. Every balance shown or checked anywhere (dashboard, rewards
+// page, redeem check, review/ledger/habit responses) goes through here so the
+// two sources can't drift: every ledger row plus every manual adjustment.
 export function getBalance(): number {
   const db = getDb();
-  return (
-    (db.prepare(`SELECT COALESCE(SUM(points), 0) AS s FROM ledger`).get() as {
-      s: number;
-    }).s ?? 0
-  );
+  const row = db
+    .prepare(
+      `SELECT (SELECT COALESCE(SUM(points), 0) FROM ledger)
+            + (SELECT COALESCE(SUM(delta), 0) FROM balance_adjustments) AS s`
+    )
+    .get() as { s: number };
+  return row.s ?? 0;
+}
+
+export const BALANCE_MAX = 1000000;
+
+// Set the balance to exactly `target` by recording the needed delta as a
+// balance_adjustments row (read + insert in one transaction). A zero delta
+// records nothing. Ledger history and lifetime totals are untouched.
+export function setBalance(target: number): {
+  ok: true;
+  newBalance: number;
+  delta: number;
+} {
+  if (!Number.isInteger(target) || target < 0 || target > BALANCE_MAX) {
+    throw new RangeError(
+      `Balance must be an integer between 0 and ${BALANCE_MAX}`
+    );
+  }
+  const db = getDb();
+  const tx = db.transaction(() => {
+    const delta = target - getBalance();
+    if (delta !== 0) {
+      db.prepare(
+        `INSERT INTO balance_adjustments (delta, note) VALUES (?, ?)`
+      ).run(delta, `Balance set to ${target}`);
+    }
+    return delta;
+  });
+  const delta = tx();
+  return { ok: true, newBalance: getBalance(), delta };
 }
 
 export function getRewards(): Reward[] {

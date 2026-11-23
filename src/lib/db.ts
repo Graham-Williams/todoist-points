@@ -81,6 +81,17 @@ function initSchema(db: Database.Database) {
       position  INTEGER NOT NULL,
       PRIMARY KEY (list, item_key)
     );
+
+    -- Manual balance overrides ("set balance to N", "reset to 0"). Each row is
+    -- the signed delta that moved the balance to the chosen value, so
+    -- balance = SUM(ledger.points) + SUM(balance_adjustments.delta) — see
+    -- getBalance() in queries.ts. Lifetime earned/spent stay ledger-only.
+    CREATE TABLE IF NOT EXISTS balance_adjustments (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      delta      INTEGER NOT NULL,
+      note       TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 }
 

@@ -1,6 +1,7 @@
 import { getStats } from "@/lib/queries";
 import DashboardRefresh from "./DashboardRefresh";
 import EarningControls from "./EarningControls";
+import BalanceCard from "./BalanceCard";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +24,7 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard label="Balance" value={stats.balance} accent="text-emerald-400" />
+        <BalanceCard balance={stats.balance} />
         <StatCard label="Total earned" value={stats.totalEarned} accent="text-sky-400" />
         <StatCard label="Total spent" value={stats.totalSpent} accent="text-rose-400" />
       </div>
@@ -54,15 +55,30 @@ export default function DashboardPage() {
       </section>
 
       <section>
-        <h2 className="mb-3 text-lg font-semibold">Redemption history</h2>
-        {stats.redemptions.length === 0 ? (
-          <p className="text-sm text-slate-500">No redemptions yet.</p>
+        <h2 className="mb-3 text-lg font-semibold">Spending &amp; adjustments</h2>
+        {stats.history.length === 0 ? (
+          <p className="text-sm text-slate-500">No redemptions or adjustments yet.</p>
         ) : (
           <ul className="divide-y divide-slate-800 rounded-xl border border-slate-800">
-            {stats.redemptions.map((e) => (
-              <li key={e.id} className="flex items-start justify-between gap-4 px-4 py-3">
-                <span className="min-w-0 break-words text-sm text-slate-200">{e.description}</span>
-                <span className="shrink-0 font-semibold text-rose-400">{e.points}</span>
+            {stats.history.map((e) => (
+              <li
+                key={`${e.kind}-${e.id}`}
+                className="flex items-start justify-between gap-4 px-4 py-3"
+              >
+                <span className="min-w-0 break-words text-sm text-slate-200">
+                  {e.description ?? (e.kind === "adjust" ? "Balance adjustment" : "Redemption")}
+                </span>
+                <span
+                  className={`shrink-0 whitespace-nowrap font-semibold ${
+                    e.kind === "redeem"
+                      ? "text-rose-400"
+                      : e.points >= 0
+                        ? "text-sky-400"
+                        : "text-amber-400"
+                  }`}
+                >
+                  {e.points > 0 ? `+${e.points}` : e.points}
+                </span>
               </li>
             ))}
           </ul>

@@ -22,19 +22,25 @@ export async function POST(
         { status: 400 }
       );
     }
-    const balance = getBalance();
-    if (balance < reward.cost) {
+    // Check + spend in one transaction. getBalance() includes manual balance
+    // adjustments, so a reset/override is respected here too.
+    const redeem = db.transaction(() => {
+      const balance = getBalance();
+      if (balance < reward.cost) return { ok: false as const, balance };
+      db.prepare(
+        `INSERT INTO ledger (type, points, source_id, description)
+         VALUES ('redeem', ?, ?, ?)`
+      ).run(-reward.cost, String(reward.id), `Redeemed: ${reward.name}`);
+      return { ok: true as const, balance: balance - reward.cost };
+    });
+    const result = redeem();
+    if (!result.ok) {
       return NextResponse.json(
-        { error: `Insufficient balance (${balance} < ${reward.cost})` },
+        { error: `Insufficient balance (${result.balance} < ${reward.cost})` },
         { status: 400 }
       );
     }
-    db.prepare(
-      `INSERT INTO ledger (type, points, source_id, description)
-       VALUES ('redeem', ?, ?, ?)`
-    ).run(-reward.cost, String(reward.id), `Redeemed: ${reward.name}`);
-
-    return NextResponse.json({ ok: true, newBalance: balance - reward.cost });
+    return NextResponse.json({ ok: true, newBalance: result.balance });
   } catch (err) {
     console.error(err);
     return NextResponse.json(
