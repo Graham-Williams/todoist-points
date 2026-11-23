@@ -2,9 +2,11 @@ import { NextResponse } from "next/server";
 import { getCompletedTasks } from "@/lib/todoist";
 import { getDb } from "@/lib/db";
 
-// POST: fetch completed tasks since the last sync and queue every completion not
-// already processed for manual review (/review), where points are assigned.
-// Labels play no part in scoring. Idempotent — re-syncing never re-queues.
+// POST: fetch completed tasks since the last sync. For each completion not
+// already processed: if points were set ahead of time (Review → Upcoming), award
+// exactly that; otherwise queue it for manual review (Review → Completed).
+// Labels play no part in scoring. Idempotent — re-syncing never re-awards or
+// re-queues.
 export async function POST() {
   try {
     const db = getDb();
@@ -42,7 +44,19 @@ export async function POST() {
          (completion_id, content, labels, completed_at, created_at)
        VALUES (?, ?, ?, ?, datetime('now'))`
     );
+    const insertLedger = db.prepare(
+      `INSERT INTO ledger (type, points, source_id, description) VALUES ('earn', ?, ?, ?)`
+    );
+    // Points set ahead of time, keyed by the ACTIVE task id, which equals the
+    // completed item's `id` here (verified 2026-07-08).
+    const lookupOverride = db.prepare(
+      `SELECT points FROM task_point_overrides WHERE task_id = ?`
+    );
+    const deleteOverride = db.prepare(
+      `DELETE FROM task_point_overrides WHERE task_id = ?`
+    );
     let newlyQueued = 0;
+    let preassignedAwarded = 0;
 
     const tx = db.transaction(() => {
       for (const task of completed) {
@@ -51,17 +65,29 @@ export async function POST() {
         // completion that was awarded, discarded, or whose earning was removed
         // from the dashboard never comes back.
         if (alreadyProcessed.get(task.id)) continue;
-        // Every new completion goes to the review queue, regardless of labels
-        // ("going forward only" — no retroactive scoring of history). The
-        // pending_review.labels column is kept for schema stability but is no
-        // longer displayed. Marked processed in the same transaction.
-        const queued = insertPendingReview.run(
-          task.id,
-          task.content,
-          JSON.stringify(task.labels ?? []),
-          task.completed_at ?? null
-        );
-        newlyQueued += queued.changes;
+
+        const override = lookupOverride.get(task.id) as
+          | { points: number }
+          | undefined;
+        if (override) {
+          // Pre-assigned: award EXACTLY that value, skip the review queue, and
+          // delete the now-stale override in this same transaction. The
+          // " (pre-assigned)" suffix is stripped for display (earningTitle).
+          insertLedger.run(override.points, task.id, `${task.content} (pre-assigned)`);
+          deleteOverride.run(task.id);
+          preassignedAwarded += 1;
+        } else {
+          // Everything else goes to the review queue ("going forward only" —
+          // no retroactive scoring of history). The pending_review.labels
+          // column is kept for schema stability but is never displayed.
+          const queued = insertPendingReview.run(
+            task.id,
+            task.content,
+            JSON.stringify(task.labels ?? []),
+            task.completed_at ?? null
+          );
+          newlyQueued += queued.changes;
+        }
         markProcessed.run(task.id);
       }
       db.prepare(
@@ -81,6 +107,7 @@ export async function POST() {
       ok: true,
       scanned: completed.length,
       newlyQueued,
+      preassignedAwarded,
       pendingReview,
     });
   } catch (err) {

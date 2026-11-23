@@ -61,8 +61,10 @@ export function initSchema(db: Database.Database) {
       created_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
-    -- LEGACY, unused: manual point pre-assignments for upcoming tasks (the
-    -- feature was removed). Kept (never dropped) so existing DBs are untouched.
+    -- Points set ahead of time for UPCOMING (uncompleted, dated) tasks, keyed
+    -- by the ACTIVE Todoist task id, which equals the completed item's id on
+    -- sync (verified 2026-07-08). Sync awards EXACTLY these points on
+    -- completion (skipping the review queue) and deletes the row.
     CREATE TABLE IF NOT EXISTS task_point_overrides (
       task_id    TEXT PRIMARY KEY,
       points     INTEGER NOT NULL,
@@ -72,8 +74,8 @@ export function initSchema(db: Database.Database) {
 
     -- Generic, per-list manual ordering. One row per (list, item) records the
     -- user's dragged position for that item within a named list. Valid list
-    -- values: see ORDER_LISTS in queries.ts (old 'labels'/'upcoming' rows may
-    -- linger harmlessly). The
+    -- values: see ORDER_LISTS in queries.ts (old 'labels' rows may linger
+    -- harmlessly). The
     -- GET paths left-join these positions so a reload reflects the custom order;
     -- items with no stored position keep their natural order and sort last.
     CREATE TABLE IF NOT EXISTS list_order (

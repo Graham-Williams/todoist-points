@@ -30,6 +30,46 @@ async function apiGet(
   return res.json();
 }
 
+// A Todoist `due` object (present only on tasks that have a due date/time).
+export interface TodoistDue {
+  date: string; // e.g. "2026-07-08" (or an ISO datetime for timed tasks)
+  string?: string; // the natural-language string the user typed, e.g. "Jul 8"
+  is_recurring?: boolean;
+}
+
+export interface ActiveDatedTask {
+  id: string;
+  content: string;
+  due: TodoistDue;
+}
+
+// Active (uncompleted) tasks that have a due date, for the Review page's
+// Upcoming section. `GET /tasks` paginates with { results, next_cursor }; we
+// keep only tasks whose `due` object is present.
+//
+// ID LINKAGE (verified empirically 2026-07-08): the `id` returned here is the
+// SAME id that later appears as `id` on the corresponding completed item from
+// /tasks/completed/by_completion_date (that endpoint returns the full task
+// object; there is no separate task_id). So an override keyed on this `id`
+// matches a completion directly on `completedTask.id`. See the sync route.
+export async function getActiveDatedTasks(): Promise<ActiveDatedTask[]> {
+  const out: ActiveDatedTask[] = [];
+  let cursor: string | undefined;
+  do {
+    const params: Record<string, string> = { limit: "200" };
+    if (cursor) params.cursor = cursor;
+    const page = (await apiGet("/tasks", params)) as {
+      results: Array<{ id: string; content: string; due?: TodoistDue | null }>;
+      next_cursor: string | null;
+    };
+    for (const t of page.results ?? []) {
+      if (t.due) out.push({ id: t.id, content: t.content, due: t.due });
+    }
+    cursor = page.next_cursor ?? undefined;
+  } while (cursor);
+  return out;
+}
+
 export interface CompletedTask {
   id: string;
   content: string;

@@ -32,33 +32,66 @@ beforeEach(() => {
   );
 });
 
-test("every new completion is queued for review, whatever its labels", async () => {
-  // Legacy config that USED to auto-award must now be ignored.
+test("labels never score: a completion with no override is queued for review", async () => {
+  // Legacy label config that USED to auto-award must be ignored.
   getDb().prepare(`INSERT INTO label_points (label_name, points) VALUES ('chores', 10)`).run();
-  getDb().prepare(`INSERT INTO task_point_overrides (task_id, points) VALUES ('t2', 50)`).run();
   items = [
     { id: "t1", content: "Labelled task", labels: ["chores"], completed_at: "2026-11-20T10:00:00Z" },
-    { id: "t2", content: "Overridden task", labels: [], completed_at: "2026-11-20T11:00:00Z" },
     { id: "t3", content: "Plain task", labels: [], completed_at: "2026-11-20T12:00:00Z" },
   ];
   const res = await POST();
   const body = await res.json();
   assert.equal(res.status, 200);
-  assert.equal(body.newlyQueued, 3);
-  assert.equal(body.pendingReview, 3);
+  assert.equal(body.newlyQueued, 2);
+  assert.equal(body.preassignedAwarded, 0);
+  assert.equal(body.pendingReview, 2);
   assert.equal(count(`SELECT COUNT(*) AS c FROM ledger`), 0);
-  assert.equal(count(`SELECT COUNT(*) AS c FROM pending_review`), 3);
-  assert.equal(count(`SELECT COUNT(*) AS c FROM processed_completions`), 3);
-  // The legacy override row is not consumed.
-  assert.equal(count(`SELECT COUNT(*) AS c FROM task_point_overrides`), 1);
+  assert.equal(count(`SELECT COUNT(*) AS c FROM processed_completions`), 2);
 });
 
-test("re-sync is idempotent: processed completions are never re-queued", async () => {
-  items = [{ id: "a", content: "Task A", labels: [], completed_at: "2026-11-20T10:00:00Z" }];
+test("a pre-assigned task is awarded exactly its points, not queued, and its override deleted", async () => {
+  getDb().prepare(`INSERT INTO task_point_overrides (task_id, points, content) VALUES ('t2', 50, 'x')`).run();
+  getDb().prepare(`INSERT INTO task_point_overrides (task_id, points, content) VALUES ('other', 9, 'y')`).run();
+  items = [
+    { id: "t2", content: "Book flights", labels: [], completed_at: "2026-11-20T11:00:00Z" },
+    { id: "t4", content: "Plain task", labels: [], completed_at: "2026-11-20T12:00:00Z" },
+  ];
+  const body = await (await POST()).json();
+  assert.equal(body.preassignedAwarded, 1);
+  assert.equal(body.newlyQueued, 1);
+  assert.deepEqual(
+    getDb().prepare(`SELECT type, points, source_id, description FROM ledger`).all(),
+    [{ type: "earn", points: 50, source_id: "t2", description: "Book flights (pre-assigned)" }]
+  );
+  assert.deepEqual(
+    (getDb().prepare(`SELECT completion_id FROM pending_review`).all() as { completion_id: string }[]).map((r) => r.completion_id),
+    ["t4"]
+  );
+  // Only the fired override is consumed.
+  assert.deepEqual(
+    (getDb().prepare(`SELECT task_id FROM task_point_overrides`).all() as { task_id: string }[]).map((r) => r.task_id),
+    ["other"]
+  );
+  assert.equal(count(`SELECT COUNT(*) AS c FROM processed_completions`), 2);
+  // Dashboard shows a clean title.
+  const q = await import("../../../lib/queries.ts");
+  assert.equal(q.getStats().recentEarnings[0].title, "Book flights");
+});
+
+test("re-sync is idempotent for both paths", async () => {
+  getDb().prepare(`INSERT INTO task_point_overrides (task_id, points) VALUES ('p', 20)`).run();
+  items = [
+    { id: "a", content: "Task A", labels: [], completed_at: "2026-11-20T10:00:00Z" },
+    { id: "p", content: "Task P", labels: [], completed_at: "2026-11-20T10:30:00Z" },
+  ];
   await POST();
-  // Discard it (as the Review tab would), then sync the same window again.
+  // Discard A (as the Review tab would) and re-add an override for P, then
+  // sync the same window again: nothing is re-queued or re-awarded.
   getDb().prepare(`DELETE FROM pending_review WHERE completion_id = 'a'`).run();
+  getDb().prepare(`INSERT INTO task_point_overrides (task_id, points) VALUES ('p', 20)`).run();
   const body = await (await POST()).json();
   assert.equal(body.newlyQueued, 0);
+  assert.equal(body.preassignedAwarded, 0);
   assert.equal(count(`SELECT COUNT(*) AS c FROM pending_review`), 0);
+  assert.equal(count(`SELECT COUNT(*) AS c FROM ledger`), 1);
 });

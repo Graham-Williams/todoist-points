@@ -158,7 +158,7 @@ export function getRewards(): Reward[] {
 // ---------------------------------------------------------------------------
 // Lists that can be manually reordered. Any other value is rejected by
 // setOrder so a bad/typo'd list name can never write orphan rows.
-export const ORDER_LISTS = new Set(["rewards", "review", "habits"]);
+export const ORDER_LISTS = new Set(["rewards", "review", "upcoming", "habits"]);
 
 // item_key -> position for a given list (used to left-join a list's rows so a
 // reload reflects the user's dragged order).
@@ -312,6 +312,71 @@ export function updateEarningPoints(
     .prepare(`UPDATE ledger SET points = ? WHERE id = ? AND type = 'earn'`)
     .run(points, id);
   return { ok: true, updated: result.changes > 0, newBalance: getBalance() };
+}
+
+// ---------------------------------------------------------------------------
+// Task point overrides (points set ahead of time for upcoming, dated tasks)
+// ---------------------------------------------------------------------------
+// An override, keyed by the ACTIVE Todoist task id, records a point value that
+// sync awards EXACTLY when that task is completed — skipping the review queue
+// (see the sync route). The row is deleted when it fires, so it never lingers.
+
+export const OVERRIDE_POINTS_MAX = 100000;
+
+export interface TaskOverrideRow {
+  task_id: string;
+  points: number;
+  content: string | null;
+}
+
+// All saved overrides as task_id -> points (left-joined onto the live task
+// list so saved values re-display on reload).
+export function getTaskOverridesMap(): Record<string, number> {
+  const rows = getDb()
+    .prepare(`SELECT task_id, points FROM task_point_overrides`)
+    .all() as { task_id: string; points: number }[];
+  const map: Record<string, number> = {};
+  for (const r of rows) map[r.task_id] = r.points;
+  return map;
+}
+
+export function getTaskOverride(taskId: string): TaskOverrideRow | undefined {
+  return getDb()
+    .prepare(
+      `SELECT task_id, points, content FROM task_point_overrides WHERE task_id = ?`
+    )
+    .get(taskId) as TaskOverrideRow | undefined;
+}
+
+// Create or update an override. Points must be an integer in [1, 100000];
+// clearing is a DELETE (deleteTaskOverride), never a 0 upsert.
+export function upsertTaskOverride(
+  taskId: string,
+  points: number,
+  content: string | null
+): { ok: true } {
+  if (!Number.isInteger(points) || points < 1 || points > OVERRIDE_POINTS_MAX) {
+    throw new RangeError(
+      `Points must be an integer between 1 and ${OVERRIDE_POINTS_MAX}`
+    );
+  }
+  getDb()
+    .prepare(
+      `INSERT INTO task_point_overrides (task_id, points, content)
+       VALUES (?, ?, ?)
+       ON CONFLICT(task_id) DO UPDATE SET points = excluded.points,
+                                          content = excluded.content`
+    )
+    .run(taskId, points, content);
+  return { ok: true };
+}
+
+// Clear an override. Idempotent.
+export function deleteTaskOverride(taskId: string): { ok: true; deleted: boolean } {
+  const result = getDb()
+    .prepare(`DELETE FROM task_point_overrides WHERE task_id = ?`)
+    .run(taskId);
+  return { ok: true, deleted: result.changes > 0 };
 }
 
 // Discard a queued completion without awarding points. It stays in
