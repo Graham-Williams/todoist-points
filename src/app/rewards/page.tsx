@@ -35,6 +35,11 @@ export default function RewardsPage() {
   const [editDescription, setEditDescription] = useState("");
   const [editCost, setEditCost] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
+  // Redeeming: one request at a time (ref-guarded so a fast double tap can't
+  // redeem twice), and the reward awaiting "go below zero?" confirmation.
+  const redeemingRef = useRef(false);
+  const [redeeming, setRedeeming] = useState(false);
+  const [confirmNegative, setConfirmNegative] = useState<Reward | null>(null);
   // True while a reorder is optimistically applied but not yet persisted — the
   // sync-driven refetch skips this list so it can't snap back the old order.
   const reordering = useRef(false);
@@ -90,16 +95,53 @@ export default function RewardsPage() {
     }
   }
 
-  async function redeem(id: number) {
+  // Redeem straight away when the balance covers the cost; otherwise ask
+  // first, since redeeming would take the balance below zero.
+  function onRedeemClick(r: Reward) {
     setStatus(null);
-    const res = await fetch(`/api/rewards/${id}/redeem`, { method: "POST" });
-    const data = await res.json();
-    if (!res.ok) {
-      setStatus(data.error ?? "Redeem failed");
+    if (r.cost > balance) {
+      setConfirmNegative(r);
       return;
     }
-    setStatus("Redeemed!");
-    load();
+    redeem(r, false);
+  }
+
+  async function redeem(r: Reward, allowNegative: boolean) {
+    if (redeemingRef.current) return;
+    redeemingRef.current = true;
+    setRedeeming(true);
+    setStatus(null);
+    try {
+      const res = await fetch(
+        `/api/rewards/${r.id}/redeem`,
+        allowNegative
+          ? {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ allowNegative: true }),
+            }
+          : { method: "POST" }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (data.code === "insufficient_balance" && !allowNegative) {
+          // The balance dropped since the page loaded: ask now, using the
+          // server's figure.
+          if (typeof data.balance === "number") setBalance(data.balance);
+          setConfirmNegative(r);
+          return;
+        }
+        setConfirmNegative(null);
+        setStatus(data.error ?? "Redeem failed");
+        return;
+      }
+      setConfirmNegative(null);
+      setStatus("Redeemed!");
+      await load();
+    } finally {
+      redeemingRef.current = false;
+      setRedeeming(false);
+    }
   }
 
   async function toggleActive(r: Reward) {
@@ -341,8 +383,8 @@ export default function RewardsPage() {
               </div>
               <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
                 <button
-                  onClick={() => redeem(r.id)}
-                  disabled={!r.active || balance < r.cost}
+                  onClick={() => onRedeemClick(r)}
+                  disabled={!r.active || redeeming}
                   className="shrink-0 whitespace-nowrap rounded-md bg-sky-600 px-3 py-2 text-xs sm:py-1.5 font-semibold text-white hover:bg-sky-500 disabled:opacity-40"
                 >
                   Redeem
@@ -364,6 +406,135 @@ export default function RewardsPage() {
           )}
         />
       )}
+
+      {confirmNegative && (
+        <ConfirmNegativeDialog
+          name={confirmNegative.name}
+          cost={confirmNegative.cost}
+          balance={balance}
+          busy={redeeming}
+          onCancel={() => setConfirmNegative(null)}
+          onConfirm={() => redeem(confirmNegative, true)}
+        />
+      )}
+    </div>
+  );
+}
+
+// In-app "go below zero?" confirmation (not window.confirm, which blocks the
+// page and browser automation). A modal dialog: focus moves to Cancel on open,
+// Tab stays inside, Esc or a backdrop click cancels (ignored while the redeem
+// is in flight), and focus returns to the Redeem button on close.
+function ConfirmNegativeDialog({
+  name,
+  cost,
+  balance,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  name: string;
+  cost: number;
+  balance: number;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const after = balance - cost;
+
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    cancelRef.current?.focus();
+    return () => previous?.focus?.();
+  }, []);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        if (!busy) onCancel();
+      } else if (e.key === "Tab") {
+        const focusable = Array.from(
+          panelRef.current?.querySelectorAll<HTMLElement>("button:not([disabled])") ?? []
+        );
+        if (focusable.length === 0) {
+          e.preventDefault();
+          return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const inside = panelRef.current?.contains(document.activeElement) ?? false;
+        if (e.shiftKey && (document.activeElement === first || !inside)) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && (document.activeElement === last || !inside)) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [busy, onCancel]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !busy) onCancel();
+      }}
+    >
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-negative-title"
+        aria-describedby="confirm-negative-body"
+        className="w-full max-w-sm rounded-xl border border-slate-800 bg-slate-900 p-5 shadow-xl"
+      >
+        <h2 id="confirm-negative-title" className="text-lg font-semibold text-slate-100">
+          Go below zero?
+        </h2>
+        <p id="confirm-negative-body" className="mt-2 break-words text-sm text-slate-300">
+          Redeeming <span className="font-semibold text-slate-100">{name}</span> costs{" "}
+          <span className="whitespace-nowrap">{cost} pts</span>. Your balance will go from{" "}
+          <span
+            className={`whitespace-nowrap font-semibold ${
+              balance < 0 ? "text-rose-400" : "text-emerald-400"
+            }`}
+          >
+            {formatPoints(balance)}
+          </span>{" "}
+          to{" "}
+          <span
+            className={`whitespace-nowrap font-semibold ${
+              after < 0 ? "text-rose-400" : "text-emerald-400"
+            }`}
+          >
+            {formatPoints(after)}
+          </span>
+          .
+        </p>
+        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <button
+            ref={cancelRef}
+            onClick={onCancel}
+            disabled={busy}
+            className="rounded-md border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800 disabled:opacity-40 sm:py-1.5"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={busy}
+            className="rounded-md bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-500 disabled:opacity-40 sm:py-1.5"
+          >
+            {busy ? "Redeeming…" : "Redeem anyway"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
