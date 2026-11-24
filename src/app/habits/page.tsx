@@ -509,6 +509,19 @@ export default function HabitsPage() {
                               className="w-24 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-right text-base text-white focus:border-emerald-500 focus:outline-none disabled:opacity-50 sm:text-xs"
                             />
                             <span className="text-xs text-slate-400">pts</span>
+                          </div>
+                          <PenaltyField
+                            checked={editHasPenalty}
+                            onCheckedChange={(on) => {
+                              setEditHasPenalty(on);
+                              if (on) setEditPenalty(editPoints);
+                            }}
+                            value={editPenalty}
+                            onValueChange={setEditPenalty}
+                            disabled={savingEdit}
+                            compact
+                          />
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
                             <button
                               onClick={() => saveEdit(h.id)}
                               disabled={savingEdit}
@@ -524,17 +537,6 @@ export default function HabitsPage() {
                               Cancel
                             </button>
                           </div>
-                          <PenaltyField
-                            checked={editHasPenalty}
-                            onCheckedChange={(on) => {
-                              setEditHasPenalty(on);
-                              if (on) setEditPenalty(editPoints);
-                            }}
-                            value={editPenalty}
-                            onValueChange={setEditPenalty}
-                            disabled={savingEdit}
-                            compact
-                          />
                           <p className="mt-1 text-xs text-slate-500">
                             New points and penalties apply to future ticks;
                             points already earned or lost stay as they were.
