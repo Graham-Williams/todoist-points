@@ -19,6 +19,7 @@ export interface LedgerEntry {
 export interface Reward {
   id: number;
   name: string;
+  description: string | null;
   cost: number;
   active: number;
   created_at: string;

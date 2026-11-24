@@ -35,12 +35,16 @@ export function initSchema(db: Database.Database) {
       created_at  TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    -- description (optional text shown under the name) was added after the
+    -- table shipped: older DBs get it from addColumnIfMissing below, so keep
+    -- it LAST here to match.
     CREATE TABLE IF NOT EXISTS rewards (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      name       TEXT NOT NULL,
-      cost       INTEGER NOT NULL,
-      active     INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT NOT NULL,
+      cost        INTEGER NOT NULL,
+      active      INTEGER NOT NULL DEFAULT 1,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      description TEXT
     );
 
     CREATE TABLE IF NOT EXISTS processed_completions (
@@ -146,6 +150,7 @@ export function initSchema(db: Database.Database) {
   addColumnIfMissing(db, "habits", "description", "TEXT");
   addColumnIfMissing(db, "habit_checks", "status", "TEXT NOT NULL DEFAULT 'done'");
   addColumnIfMissing(db, "habits", "penalty", "INTEGER");
+  addColumnIfMissing(db, "rewards", "description", "TEXT");
 }
 
 function addColumnIfMissing(

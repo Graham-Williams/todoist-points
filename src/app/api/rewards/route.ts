@@ -1,32 +1,25 @@
 import { NextResponse } from "next/server";
-import { getDb } from "@/lib/db";
 import { getRewards } from "@/lib/queries";
+import { createReward } from "@/lib/rewards";
+import { parseRewardInput } from "@/lib/validate";
 
-// GET: list all rewards.
+// GET: list all rewards (with description), in drag order.
 export async function GET() {
   return NextResponse.json({ rewards: getRewards() });
 }
 
-// POST: create a reward. Body: { name, cost }
+// POST { name, cost, description? }: create a reward. name is trimmed, 1–100
+// chars; cost is an integer in [1, 100000]; description is optional text
+// (trimmed, at most 500 chars, blank -> none).
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as { name?: string; cost?: number };
-    const name = (body.name ?? "").trim();
-    const cost = Math.trunc(Number(body.cost));
-    if (!name) {
-      return NextResponse.json({ error: "Name is required" }, { status: 400 });
+    const parsed = parseRewardInput(await req.json().catch(() => null), false);
+    if (!parsed.ok) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 });
     }
-    if (!Number.isFinite(cost) || cost < 0) {
-      return NextResponse.json(
-        { error: "Cost must be a non-negative number" },
-        { status: 400 }
-      );
-    }
-    const db = getDb();
-    const info = db
-      .prepare(`INSERT INTO rewards (name, cost, active) VALUES (?, ?, 1)`)
-      .run(name, cost);
-    return NextResponse.json({ ok: true, id: info.lastInsertRowid });
+    const { name, cost, description } = parsed.value;
+    const reward = createReward(name!, cost!, description ?? null);
+    return NextResponse.json({ ok: true, id: reward.id, reward });
   } catch (err) {
     console.error(err);
     return NextResponse.json(

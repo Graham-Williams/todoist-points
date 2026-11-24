@@ -1,4 +1,5 @@
-// Small request-validation helpers shared by the habit routes. Pure, DB-free.
+// Small request-validation helpers shared by the habit and reward routes.
+// Pure, DB-free.
 
 // A positive integer id from a route segment, strictly digits (no "1.5",
 // "1e3", " 7", "-1"); null when invalid.
@@ -100,6 +101,68 @@ export function parseHabitInput(
   }
   if (partial && Object.keys(value).length === 0) {
     return { ok: false, error: "Nothing to update (name, description, points or penalty)" };
+  }
+  return { ok: true, value };
+}
+
+export const REWARD_NAME_MAX = 100;
+export const REWARD_COST_MAX = 100000;
+
+export interface RewardInput {
+  name?: string;
+  description?: string | null;
+  cost?: number;
+  active?: boolean;
+}
+
+// Validate a reward body for create (name + cost required, description
+// optional) or for a partial edit (any subset, but at least one field). name:
+// trimmed, 1–100 chars. description: see parseDescription (null/blank clears
+// it on edit). cost: integer in [1, 100000]. active (edit only): a boolean.
+export function parseRewardInput(
+  body: unknown,
+  partial: boolean
+): { ok: true; value: RewardInput } | { ok: false; error: string } {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return { ok: false, error: "Body must be a JSON object" };
+  }
+  const b = body as Record<string, unknown>;
+  const value: RewardInput = {};
+  if (b.name !== undefined || !partial) {
+    const name = typeof b.name === "string" ? b.name.trim() : "";
+    if (name.length < 1 || name.length > REWARD_NAME_MAX) {
+      return { ok: false, error: `Name must be 1–${REWARD_NAME_MAX} characters` };
+    }
+    value.name = name;
+  }
+  if (b.description !== undefined) {
+    const description = parseDescription(b.description);
+    if (description === undefined) {
+      return {
+        ok: false,
+        error: `Description must be text of at most ${DESCRIPTION_MAX} characters`,
+      };
+    }
+    value.description = description;
+  }
+  if (b.cost !== undefined || !partial) {
+    const cost = parseIntInRange(b.cost, 1, REWARD_COST_MAX);
+    if (cost === null) {
+      return {
+        ok: false,
+        error: `Cost must be an integer between 1 and ${REWARD_COST_MAX}`,
+      };
+    }
+    value.cost = cost;
+  }
+  if (partial && b.active !== undefined) {
+    if (typeof b.active !== "boolean") {
+      return { ok: false, error: "active must be true or false" };
+    }
+    value.active = b.active;
+  }
+  if (partial && Object.keys(value).length === 0) {
+    return { ok: false, error: "Nothing to update (name, description, cost or active)" };
   }
   return { ok: true, value };
 }
