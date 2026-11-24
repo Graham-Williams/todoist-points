@@ -215,7 +215,7 @@ test("done -> missed -> clear: missed earns nothing and removes the earned row",
     db().prepare(`SELECT status, ledger_id FROM habit_checks`).all(),
     [{ status: "missed", ledger_id: null }]
   );
-  assert.deepEqual(h.getHabitWeek(D, D).checks, [{ habit_id: a, date: D, status: "missed" }]);
+  assert.deepEqual(h.getHabitWeek(D, D).checks, [{ habit_id: a, date: D, status: "missed", points: null }]);
   h.setHabitStatus(a, D, "missed"); // idempotent
   assert.equal(ledgerRows().length, 0);
   // missed -> done earns again.
@@ -329,4 +329,175 @@ test("PATCH /api/habits/[id] validates like create and 404s unknown/archived", a
   assert.equal((await patch("99999", { points: 3 })).status, 404);
   h.archiveHabit(a);
   assert.equal((await patch(String(a), { points: 3 })).status, 404);
+});
+
+// ---- penalties (losing points for a missed habit) ---------------------------
+
+// A habit with a penalty, created "in the past" so it is eligible for D.
+function penaltyHabit(name: string, points: number, penalty: number) {
+  const id = habit(name, points);
+  h.updateHabit(id, { penalty });
+  return id;
+}
+const checkRow = (id: number, date = D) =>
+  db().prepare(`SELECT status, ledger_id FROM habit_checks WHERE habit_id = ? AND date = ?`).get(id, date) as
+    | { status: string; ledger_id: number | null }
+    | undefined;
+
+test("penalised habit: every transition leaves exactly the new status's value", () => {
+  h.setBonusPoints(0); // isolate the habit's own rows
+  const a = penaltyHabit("Floss", 5, 3);
+  const rows = () => ledgerRows().map(({ points, source_id, description }) => ({ points, source_id, description }));
+  const done = { points: 5, source_id: `habit:${a}:${D}`, description: "Habit: Floss" };
+  const miss = { points: -3, source_id: `habit-miss:${a}:${D}`, description: "Missed habit: Floss" };
+
+  // blank -> missed: loses the penalty; the check owns the negative row.
+  let r = h.setHabitStatus(a, D, "missed");
+  assert.deepEqual(r, { found: true, status: "missed", bonus: false, newBalance: -3 });
+  assert.deepEqual(rows(), [miss]);
+  assert.equal(checkRow(a)?.ledger_id, ledgerRows()[0].id);
+  // missed -> missed: no-op.
+  h.setHabitStatus(a, D, "missed");
+  assert.deepEqual(rows(), [miss]);
+  // missed -> done: the penalty row goes, the earn row comes.
+  r = h.setHabitStatus(a, D, "done");
+  assert.equal(r.found && r.newBalance, 5);
+  assert.deepEqual(rows(), [done]);
+  // done -> done: no-op.
+  h.setHabitStatus(a, D, "done");
+  assert.deepEqual(rows(), [done]);
+  // done -> missed.
+  r = h.setHabitStatus(a, D, "missed");
+  assert.equal(r.found && r.newBalance, -3);
+  assert.deepEqual(rows(), [miss]);
+  assert.deepEqual(h.getHabitWeek(D, D).checks, [{ habit_id: a, date: D, status: "missed", points: -3 }]);
+  // missed -> blank.
+  r = h.setHabitStatus(a, D, null);
+  assert.equal(r.found && r.newBalance, 0);
+  assert.deepEqual(rows(), []);
+  assert.equal(checkRow(a), undefined);
+  // blank -> done -> blank.
+  h.setHabitStatus(a, D, "done");
+  r = h.setHabitStatus(a, D, null);
+  assert.equal(r.found && r.newBalance, 0);
+  assert.deepEqual(rows(), []);
+});
+
+test("cycling cells many times always leaves the balance at the marks' total", () => {
+  h.setBonusPoints(0);
+  const a = penaltyHabit("Floss", 5, 3);
+  const b = habit("Read", 7); // no penalty
+  const c = penaltyHabit("Run", 4, 9);
+  const value: Record<string, Record<string, number>> = {
+    [a]: { done: 5, missed: -3 }, [b]: { done: 7, missed: 0 }, [c]: { done: 4, missed: -9 },
+  };
+  const dates = [D, "2026-11-21", "2026-11-22"];
+  type Mark = "done" | "missed" | null;
+  const states: Mark[] = ["done", "missed", null];
+  const current = new Map<string, Mark>();
+  let seed = 12345; // deterministic LCG
+  const rand = (n: number) => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) % n);
+  for (let i = 0; i < 600; i++) {
+    const id = [a, b, c][rand(3)];
+    const date = dates[rand(3)];
+    // Mostly follow the UI's tap cycle, sometimes jump (or repeat) like a retry.
+    const prev = current.get(`${id}|${date}`) ?? null;
+    const next: Mark = rand(4) === 0 ? states[rand(3)] : prev === null ? "done" : prev === "done" ? "missed" : null;
+    h.setHabitStatus(id, date, next);
+    current.set(`${id}|${date}`, next);
+    let expected = 0;
+    let expectedRows = 0;
+    for (const [k, s] of current) {
+      if (s === null) continue;
+      const v = value[k.split("|")[0]][s];
+      expected += v;
+      if (v !== 0) expectedRows += 1;
+    }
+    assert.equal(q.getBalance(), expected, `tap ${i}`);
+    assert.equal(ledgerRows().length, expectedRows, `rows after tap ${i}`);
+  }
+});
+
+test("a habit without a penalty: missed creates no ledger row", () => {
+  h.setBonusPoints(0);
+  const a = habit("Read", 7);
+  assert.equal(h.getActiveHabits()[0].penalty, null);
+  h.setHabitStatus(a, D, "missed");
+  assert.deepEqual(ledgerRows(), []);
+  assert.equal(checkRow(a)?.ledger_id, null);
+  // Clearing the penalty (0 or null) turns it back into a free miss.
+  h.updateHabit(a, { penalty: 4 });
+  h.updateHabit(a, { penalty: 0 });
+  assert.equal(h.getActiveHabits()[0].penalty, null);
+  h.setHabitStatus(a, "2026-11-21", "missed");
+  assert.deepEqual(ledgerRows(), []);
+});
+
+test("editing the penalty affects future misses only", () => {
+  h.setBonusPoints(0);
+  const a = penaltyHabit("Floss", 5, 3);
+  h.setHabitStatus(a, D, "missed");
+  h.updateHabit(a, { penalty: 10 });
+  h.setHabitStatus(a, D, "missed"); // same status: keeps the captured -3
+  assert.deepEqual(ledgerRows().map((l) => l.points), [-3]);
+  h.setHabitStatus(a, "2026-11-21", "missed");
+  assert.deepEqual(ledgerRows().map((l) => l.points), [-3, -10]);
+  // Updating other fields leaves the penalty alone.
+  assert.equal(h.updateHabit(a, { points: 6 })?.penalty, 10);
+  // Removing the penalty leaves already-lost rows in place.
+  h.updateHabit(a, { penalty: null });
+  assert.deepEqual(ledgerRows().map((l) => l.points), [-3, -10]);
+  assert.equal(q.getBalance(), -13);
+});
+
+test("a penalty row removed from the dashboard: clearing and re-marking still net correctly", () => {
+  h.setBonusPoints(0);
+  const a = penaltyHabit("Floss", 5, 3);
+  h.setHabitStatus(a, D, "missed");
+  q.deleteEarning(ledgerRows()[0].id);
+  assert.equal(q.getBalance(), 0);
+  // missed -> done after the removal: just the earn row.
+  let r = h.setHabitStatus(a, D, "done");
+  assert.equal(r.found && r.newBalance, 5);
+  // And straight to clear after another removal.
+  h.setHabitStatus(a, D, "missed");
+  q.deleteEarning(ledgerRows()[0].id);
+  r = h.setHabitStatus(a, D, null);
+  assert.equal(r.found && r.newBalance, 0);
+  assert.deepEqual(ledgerRows(), []);
+  assert.equal(checkRow(a), undefined);
+});
+
+test("penalties can take the balance below zero", () => {
+  h.setBonusPoints(0);
+  const a = penaltyHabit("Floss", 5, 20);
+  h.setHabitStatus(a, "2026-11-19", "done");
+  const r = h.setHabitStatus(a, D, "missed");
+  assert.equal(r.found && r.newBalance, -15);
+  assert.equal(q.getStats().balance, -15);
+});
+
+test("a penalised miss blocks the bonus like any miss", () => {
+  const a = penaltyHabit("Floss", 5, 3);
+  const b = habit("Read", 7);
+  h.setHabitStatus(b, D, "done");
+  const r = h.setHabitStatus(a, D, "missed");
+  assert.equal(r.found && r.bonus, false);
+  assert.equal(q.getBalance(), 7 - 3);
+  const r2 = h.setHabitStatus(a, D, "done");
+  assert.equal(r2.found && r2.bonus, true);
+  assert.equal(q.getBalance(), 5 + 7 + 10);
+});
+
+test("createHabit / updateHabit validate the penalty", () => {
+  assert.equal(h.createHabit("A", 5).penalty, null);
+  assert.equal(h.createHabit("B", 5, null, 0).penalty, null);
+  assert.equal(h.createHabit("C", 5, null, 8).penalty, 8);
+  for (const bad of [-1, 1.5, 100001, NaN]) {
+    assert.throws(() => h.createHabit("D", 5, null, bad), RangeError, String(bad));
+  }
+  const id = h.createHabit("E", 5, null, 2).id;
+  assert.throws(() => h.updateHabit(id, { penalty: -2 }), RangeError);
+  assert.equal(h.updateHabit(id, { name: "E2" })?.penalty, 2);
+  assert.equal(h.updateHabit(id, { penalty: null })?.penalty, null);
 });
