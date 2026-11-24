@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { deleteEarning, updateEarningPoints } from "@/lib/queries";
+import { parseIntInRange } from "@/lib/validate";
 
 // DELETE: remove a single earning (ledger row of type 'earn') by id — e.g.
 // points from a stray/test task. Deletes the ledger row ONLY; the completion
@@ -51,9 +52,9 @@ export async function PATCH(
         { status: 400 }
       );
     }
-    const body = (await req.json()) as { points?: number };
-    const points = Number(body.points);
-    if (!Number.isInteger(points) || points < 1 || points > 100000) {
+    const body = ((await req.json().catch(() => null)) ?? {}) as { points?: unknown };
+    const points = parseIntInRange(body.points, 1, 100000);
+    if (points === null) {
       return NextResponse.json(
         { error: "Points must be an integer between 1 and 100000" },
         { status: 400 }

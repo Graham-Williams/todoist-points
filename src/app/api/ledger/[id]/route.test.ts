@@ -85,3 +85,23 @@ test("removing a loss gives the points back", async () => {
   const res = await DELETE(new Request("http://localhost"), { params: Promise.resolve({ id: String(loss) }) });
   assert.deepEqual(await res.json(), { ok: true, newBalance: 10 });
 });
+
+test("PATCH rejects a missing, null or non-numeric body with 400", async () => {
+  const id = row("earn", 10);
+  const raw = (body: string) =>
+    PATCH(
+      new Request(`http://localhost/api/ledger/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body,
+      }),
+      { params: Promise.resolve({ id: String(id) }) }
+    );
+  for (const body of ["", "null", "not json"]) {
+    assert.equal((await raw(body)).status, 400, `body ${JSON.stringify(body)}`);
+  }
+  for (const points of [true, [3], "", null]) {
+    assert.equal((await patch(id, { points })).status, 400, `points ${JSON.stringify(points)}`);
+  }
+  assert.equal(pointsOf(id), 10);
+});
