@@ -91,3 +91,39 @@ test("inactive rewards can't be redeemed even with the flag; bad and unknown ids
   assert.equal((await redeem(id + 999, { allowNegative: true })).status, 404);
   assert.deepEqual(redeemRows(), []);
 });
+
+test("expectedCost matching the current cost redeems (with or without the flag)", async () => {
+  const { id } = createReward("Coffee", 30);
+  earn(10);
+  const res = await redeem(id, { allowNegative: true, expectedCost: 30 });
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { ok: true, newBalance: -20 });
+  earn(100);
+  assert.equal((await redeem(id, { expectedCost: 30 })).status, 200);
+  assert.equal(q.getBalance(), 50);
+});
+
+test("expectedCost that no longer matches is a 409 cost_changed and charges nothing", async () => {
+  const { id } = createReward("Coffee", 30);
+  earn(10);
+  updateReward(id, { cost: 45 }); // changed in another tab after the dialog opened
+  for (const body of [{ allowNegative: true, expectedCost: 30 }, { expectedCost: 30 }]) {
+    const res = await redeem(id, body);
+    assert.equal(res.status, 409, JSON.stringify(body));
+    const data = await res.json();
+    assert.equal(data.code, "cost_changed");
+    assert.equal(data.cost, 45);
+  }
+  assert.deepEqual(redeemRows(), []);
+  assert.equal(q.getBalance(), 10);
+});
+
+test("a non-integer expectedCost is a 400 and never redeems", async () => {
+  const { id } = createReward("Coffee", 30);
+  earn(100);
+  for (const bad of ["30", 30.5, null, true, [], {}, NaN]) {
+    const res = await redeem(id, { allowNegative: true, expectedCost: bad });
+    assert.equal(res.status, 400, JSON.stringify(bad));
+  }
+  assert.deepEqual(redeemRows(), []);
+});

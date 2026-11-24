@@ -8,7 +8,11 @@ import { parseId } from "@/lib/validate";
 // below zero (the page asks first). Without it, a balance below the cost is a
 // 400 with code "insufficient_balance" plus { balance, cost }, so the client
 // can ask and retry with the flag. allowNegative must be a boolean when given.
-// An absent or non-JSON body means no flag. Inactive rewards can't be redeemed.
+// Optional expectedCost: the cost the client showed; when given it must be an
+// integer (400 otherwise) and equal the reward's current cost, else 409 with
+// code "cost_changed" and the current cost, and nothing is recorded — so a
+// confirmation can never charge a different amount than it displayed. An
+// absent or non-JSON body means neither. Inactive rewards can't be redeemed.
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -19,10 +23,11 @@ export async function POST(
       return NextResponse.json({ error: "id must be a positive integer" }, { status: 400 });
     }
     const body = await req.json().catch(() => null);
-    const flag =
+    const fields =
       typeof body === "object" && body !== null && !Array.isArray(body)
-        ? (body as Record<string, unknown>).allowNegative
-        : undefined;
+        ? (body as Record<string, unknown>)
+        : {};
+    const flag = fields.allowNegative;
     if (flag !== undefined && typeof flag !== "boolean") {
       return NextResponse.json(
         { error: "allowNegative must be true or false" },
@@ -30,45 +35,59 @@ export async function POST(
       );
     }
     const allowNegative = flag === true;
-    const db = getDb();
-    const reward = db.prepare(`SELECT * FROM rewards WHERE id = ?`).get(id) as
-      | { id: number; name: string; cost: number; active: number }
-      | undefined;
-    if (!reward) {
-      return NextResponse.json({ error: "Reward not found" }, { status: 404 });
-    }
-    if (!reward.active) {
+    const expectedCost = fields.expectedCost;
+    if (
+      expectedCost !== undefined &&
+      !(typeof expectedCost === "number" && Number.isSafeInteger(expectedCost))
+    ) {
       return NextResponse.json(
-        { error: "Reward is inactive" },
+        { error: "expectedCost must be an integer" },
         { status: 400 }
       );
     }
-    // Check + spend in one transaction. getBalance() includes manual balance
-    // adjustments, so a reset/override is respected here too.
+    const db = getDb();
+    // Read the reward, check it and the balance, and spend, all in one
+    // transaction. getBalance() includes manual balance adjustments, so a
+    // reset/override is respected here too.
     const redeem = db.transaction(() => {
+      const reward = db.prepare(`SELECT * FROM rewards WHERE id = ?`).get(id) as
+        | { id: number; name: string; cost: number; active: number }
+        | undefined;
+      if (!reward) {
+        return NextResponse.json({ error: "Reward not found" }, { status: 404 });
+      }
+      if (!reward.active) {
+        return NextResponse.json({ error: "Reward is inactive" }, { status: 400 });
+      }
+      if (expectedCost !== undefined && expectedCost !== reward.cost) {
+        return NextResponse.json(
+          {
+            error: `This reward's cost changed to ${reward.cost} pts`,
+            code: "cost_changed",
+            cost: reward.cost,
+          },
+          { status: 409 }
+        );
+      }
       const balance = getBalance();
       if (balance < reward.cost && !allowNegative) {
-        return { ok: false as const, balance };
+        return NextResponse.json(
+          {
+            error: `Insufficient balance (${balance} < ${reward.cost})`,
+            code: "insufficient_balance",
+            balance,
+            cost: reward.cost,
+          },
+          { status: 400 }
+        );
       }
       db.prepare(
         `INSERT INTO ledger (type, points, source_id, description)
          VALUES ('redeem', ?, ?, ?)`
       ).run(-reward.cost, String(reward.id), `Redeemed: ${reward.name}`);
-      return { ok: true as const, balance: balance - reward.cost };
+      return NextResponse.json({ ok: true, newBalance: balance - reward.cost });
     });
-    const result = redeem();
-    if (!result.ok) {
-      return NextResponse.json(
-        {
-          error: `Insufficient balance (${result.balance} < ${reward.cost})`,
-          code: "insufficient_balance",
-          balance: result.balance,
-          cost: reward.cost,
-        },
-        { status: 400 }
-      );
-    }
-    return NextResponse.json({ ok: true, newBalance: result.balance });
+    return redeem();
   } catch (err) {
     console.error(err);
     return NextResponse.json(
