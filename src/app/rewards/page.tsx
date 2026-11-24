@@ -61,9 +61,14 @@ export default function RewardsPage() {
 
   useEffect(() => {
     if (returnFocusTo === null || redeeming || confirmNegative) return;
-    document
-      .querySelector<HTMLButtonElement>(`button[data-redeem-id="${returnFocusTo}"]`)
-      ?.focus();
+    // Only reclaim focus that was lost (to the closed dialog or the disabled
+    // button); never pull it away from a field the user moved to meanwhile.
+    const active = document.activeElement;
+    if (!active || active === document.body) {
+      document
+        .querySelector<HTMLButtonElement>(`button[data-redeem-id="${returnFocusTo}"]`)
+        ?.focus();
+    }
     setReturnFocusTo(null);
   }, [returnFocusTo, redeeming, confirmNegative]);
 
@@ -148,7 +153,8 @@ export default function RewardsPage() {
           setStatus(
             `${r.name} now costs ${data.cost} pts (it changed elsewhere). Nothing was redeemed; check it and try again.`
           );
-          await load();
+          // A failed refresh mustn't be reported as a failed redeem.
+          await load().catch(() => {});
           return;
         }
         setStatus(data.error ?? "Redeem failed");
@@ -156,7 +162,7 @@ export default function RewardsPage() {
       }
       setConfirmNegative(null);
       setStatus("Redeemed!");
-      await load();
+      await load().catch(() => {});
     } catch {
       // Network failure: the request may or may not have landed, so close the
       // dialog, say so, and try to refresh the balance.
