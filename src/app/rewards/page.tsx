@@ -40,6 +40,10 @@ export default function RewardsPage() {
   const redeemingRef = useRef(false);
   const [redeeming, setRedeeming] = useState(false);
   const [confirmNegative, setConfirmNegative] = useState<Reward | null>(null);
+  // The reward whose Redeem button gets focus back once the redeem has settled
+  // and the dialog is closed (the button is disabled while in flight, so the
+  // dialog can't hand focus straight back to it).
+  const [returnFocusTo, setReturnFocusTo] = useState<number | null>(null);
   // True while a reorder is optimistically applied but not yet persisted — the
   // sync-driven refetch skips this list so it can't snap back the old order.
   const reordering = useRef(false);
@@ -54,6 +58,14 @@ export default function RewardsPage() {
     setRewards(rData.rewards ?? []);
     setBalance(dData.balance ?? 0);
   }, []);
+
+  useEffect(() => {
+    if (returnFocusTo === null || redeeming || confirmNegative) return;
+    document
+      .querySelector<HTMLButtonElement>(`button[data-redeem-id="${returnFocusTo}"]`)
+      ?.focus();
+    setReturnFocusTo(null);
+  }, [returnFocusTo, redeeming, confirmNegative]);
 
   useEffect(() => {
     load();
@@ -106,22 +118,22 @@ export default function RewardsPage() {
     redeem(r, false);
   }
 
+  // expectedCost is the cost the user saw (the row, or the dialog's snapshot):
+  // the server refuses with 409 if it has since changed, so a confirmation can
+  // never charge a different amount than it showed.
   async function redeem(r: Reward, allowNegative: boolean) {
     if (redeemingRef.current) return;
     redeemingRef.current = true;
     setRedeeming(true);
     setStatus(null);
     try {
-      const res = await fetch(
-        `/api/rewards/${r.id}/redeem`,
-        allowNegative
-          ? {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ allowNegative: true }),
-            }
-          : { method: "POST" }
-      );
+      const res = await fetch(`/api/rewards/${r.id}/redeem`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          allowNegative ? { allowNegative: true, expectedCost: r.cost } : { expectedCost: r.cost }
+        ),
+      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         if (data.code === "insufficient_balance" && !allowNegative) {
@@ -132,15 +144,29 @@ export default function RewardsPage() {
           return;
         }
         setConfirmNegative(null);
+        if (data.code === "cost_changed") {
+          setStatus(
+            `${r.name} now costs ${data.cost} pts (it changed elsewhere). Nothing was redeemed; check it and try again.`
+          );
+          await load();
+          return;
+        }
         setStatus(data.error ?? "Redeem failed");
         return;
       }
       setConfirmNegative(null);
       setStatus("Redeemed!");
       await load();
+    } catch {
+      // Network failure: the request may or may not have landed, so close the
+      // dialog, say so, and try to refresh the balance.
+      setConfirmNegative(null);
+      setStatus("Couldn't reach the server. Check your balance before trying again.");
+      load().catch(() => {});
     } finally {
       redeemingRef.current = false;
       setRedeeming(false);
+      setReturnFocusTo(r.id);
     }
   }
 
@@ -385,6 +411,7 @@ export default function RewardsPage() {
                 <button
                   onClick={() => onRedeemClick(r)}
                   disabled={!r.active || redeeming}
+                  data-redeem-id={r.id}
                   className="shrink-0 whitespace-nowrap rounded-md bg-sky-600 px-3 py-2 text-xs sm:py-1.5 font-semibold text-white hover:bg-sky-500 disabled:opacity-40"
                 >
                   Redeem
@@ -413,7 +440,10 @@ export default function RewardsPage() {
           cost={confirmNegative.cost}
           balance={balance}
           busy={redeeming}
-          onCancel={() => setConfirmNegative(null)}
+          onCancel={() => {
+            setReturnFocusTo(confirmNegative.id);
+            setConfirmNegative(null);
+          }}
           onConfirm={() => redeem(confirmNegative, true)}
         />
       )}
@@ -423,8 +453,9 @@ export default function RewardsPage() {
 
 // In-app "go below zero?" confirmation (not window.confirm, which blocks the
 // page and browser automation). A modal dialog: focus moves to Cancel on open,
-// Tab stays inside, Esc or a backdrop click cancels (ignored while the redeem
-// is in flight), and focus returns to the Redeem button on close.
+// Tab stays inside, and Esc or a backdrop click cancels (ignored while the
+// redeem is in flight). The page returns focus to the reward's Redeem button
+// after it closes (see returnFocusTo).
 function ConfirmNegativeDialog({
   name,
   cost,
@@ -445,9 +476,7 @@ function ConfirmNegativeDialog({
   const after = balance - cost;
 
   useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
     cancelRef.current?.focus();
-    return () => previous?.focus?.();
   }, []);
 
   useEffect(() => {
