@@ -3,10 +3,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import SortableList from "../SortableList";
 import { formatPoints } from "@/lib/points";
+import {
+  DESCRIPTION_MAX,
+  REWARD_COST_MAX,
+  REWARD_NAME_MAX,
+  parseIntInRange,
+} from "@/lib/validate";
 
 interface Reward {
   id: number;
   name: string;
+  description: string | null;
   cost: number;
   active: number;
 }
@@ -14,14 +21,20 @@ interface Reward {
 export default function RewardsPage() {
   const [rewards, setRewards] = useState<Reward[]>([]);
   const [balance, setBalance] = useState(0);
+  // Add form.
   const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
   const [cost, setCost] = useState("");
+  const [adding, setAdding] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
-  // Inline cost editing: which reward is being edited, its draft value, and an
-  // in-flight guard so controls disable while the PATCH is pending.
+  // Inline edit of one reward (name / description / cost): which reward is
+  // being edited, its drafts, and an in-flight guard so the form disables
+  // while the PATCH is pending.
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
   const [editCost, setEditCost] = useState("");
-  const [editBusy, setEditBusy] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
   // True while a reorder is optimistically applied but not yet persisted — the
   // sync-driven refetch skips this list so it can't snap back the old order.
   const reordering = useRef(false);
@@ -51,19 +64,30 @@ export default function RewardsPage() {
   async function addReward(e: React.FormEvent) {
     e.preventDefault();
     setStatus(null);
-    const res = await fetch("/api/rewards", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, cost: parseInt(cost, 10) }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setStatus(data.error ?? "Failed to add reward");
+    const n = parseCost(cost);
+    if (!name.trim() || n === null) {
+      setStatus(COST_HINT);
       return;
     }
-    setName("");
-    setCost("");
-    load();
+    setAdding(true);
+    try {
+      const res = await fetch("/api/rewards", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, description, cost: n }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setStatus(data.error ?? "Failed to add reward");
+        return;
+      }
+      setName("");
+      setDescription("");
+      setCost("");
+      await load();
+    } finally {
+      setAdding(false);
+    }
   }
 
   async function redeem(id: number) {
@@ -95,12 +119,13 @@ export default function RewardsPage() {
   function startEdit(r: Reward) {
     setStatus(null);
     setEditingId(r.id);
+    setEditName(r.name);
+    setEditDescription(r.description ?? "");
     setEditCost(String(r.cost));
   }
 
   function cancelEdit() {
     setEditingId(null);
-    setEditCost("");
   }
 
   // Persist a new drag order: optimistic local update, then POST. On failure,
@@ -126,29 +151,30 @@ export default function RewardsPage() {
     }
   }
 
-  async function saveCost(id: number) {
-    const n = parseInt(editCost, 10);
-    if (!Number.isInteger(n) || n < 1) {
-      setStatus("Cost must be a whole number of at least 1.");
+  async function saveEdit(id: number) {
+    const n = parseCost(editCost);
+    if (!editName.trim() || n === null) {
+      setStatus(COST_HINT);
       return;
     }
     setStatus(null);
-    setEditBusy(true);
+    setSavingEdit(true);
     try {
       const res = await fetch(`/api/rewards/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cost: n }),
+        // A blank description clears it.
+        body: JSON.stringify({ name: editName, description: editDescription, cost: n }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setStatus(data.error ?? "Failed to update cost");
+        setStatus(data.error ?? "Failed to save reward");
         return;
       }
       cancelEdit();
       await load();
     } finally {
-      setEditBusy(false);
+      setSavingEdit(false);
     }
   }
 
@@ -176,15 +202,28 @@ export default function RewardsPage() {
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
+            maxLength={REWARD_NAME_MAX}
             placeholder="e.g. 1 hour of Rocket League"
             className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-base text-white focus:border-emerald-500 focus:outline-none sm:w-64 sm:text-sm"
             required
           />
         </div>
         <div className="flex w-full flex-col gap-1 sm:w-auto">
+          <label className="text-xs text-slate-400">Description (optional)</label>
+          <input
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            maxLength={DESCRIPTION_MAX}
+            placeholder="e.g. Weekends only"
+            className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-base text-white focus:border-emerald-500 focus:outline-none sm:w-64 sm:text-sm"
+          />
+        </div>
+        <div className="flex w-full flex-col gap-1 sm:w-auto">
           <label className="text-xs text-slate-400">Cost</label>
           <input
             type="number"
+            min={1}
+            max={REWARD_COST_MAX}
             value={cost}
             onChange={(e) => setCost(e.target.value)}
             placeholder="100"
@@ -194,9 +233,10 @@ export default function RewardsPage() {
         </div>
         <button
           type="submit"
-          className="w-full rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 sm:w-auto"
+          disabled={adding}
+          className="w-full rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-40 sm:w-auto"
         >
-          Add reward
+          {adding ? "Adding…" : "Add reward"}
         </button>
         {status && <span className="text-sm text-slate-400">{status}</span>}
       </form>
@@ -218,46 +258,85 @@ export default function RewardsPage() {
                 r.active ? "" : "opacity-50"
               }`}
             >
-              <div className="min-w-0">
-                <div className="break-words text-sm text-slate-100">
-                  {r.name}
-                </div>
+              <div className="min-w-0 sm:flex-1">
                 {editingId === r.id ? (
-                  <div className="mt-1 flex items-center gap-2">
+                  <div className="space-y-2">
                     <input
-                      type="number"
-                      min={1}
-                      value={editCost}
-                      onChange={(e) => setEditCost(e.target.value)}
-                      disabled={editBusy}
-                      className="w-24 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-right text-base text-white focus:border-emerald-500 focus:outline-none disabled:opacity-50 sm:text-xs"
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      maxLength={REWARD_NAME_MAX}
+                      disabled={savingEdit}
+                      aria-label="Reward name"
+                      className="w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-base text-white focus:border-emerald-500 focus:outline-none disabled:opacity-50 sm:text-sm"
                     />
-                    <span className="text-xs text-slate-400">pts</span>
-                    <button
-                      onClick={() => saveCost(r.id)}
-                      disabled={editBusy}
-                      className="rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-40"
-                    >
-                      {editBusy ? "Saving…" : "Save"}
-                    </button>
-                    <button
-                      onClick={cancelEdit}
-                      disabled={editBusy}
-                      className="rounded-md border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40"
-                    >
-                      Cancel
-                    </button>
+                    <textarea
+                      value={editDescription}
+                      onChange={(e) => setEditDescription(e.target.value)}
+                      maxLength={DESCRIPTION_MAX}
+                      rows={2}
+                      disabled={savingEdit}
+                      placeholder="Description (optional)"
+                      aria-label="Reward description"
+                      className="w-full resize-y rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-base text-white focus:border-emerald-500 focus:outline-none disabled:opacity-50 sm:text-xs"
+                    />
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <input
+                          type="number"
+                          min={1}
+                          max={REWARD_COST_MAX}
+                          value={editCost}
+                          onChange={(e) => setEditCost(e.target.value)}
+                          disabled={savingEdit}
+                          aria-label="Cost in points"
+                          className="w-24 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-right text-base text-white focus:border-emerald-500 focus:outline-none disabled:opacity-50 sm:text-xs"
+                        />
+                        <span className="text-xs text-slate-400">pts</span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <button
+                          onClick={() => saveEdit(r.id)}
+                          disabled={savingEdit}
+                          className="rounded-md bg-emerald-600 px-2.5 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-40 sm:py-1"
+                        >
+                          {savingEdit ? "Saving…" : "Save"}
+                        </button>
+                        <button
+                          onClick={cancelEdit}
+                          disabled={savingEdit}
+                          className="rounded-md border border-slate-700 px-2.5 py-2 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40 sm:py-1"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Changes apply to future redemptions; past redemptions
+                        keep the name and cost they had.
+                      </p>
+                    </div>
                   </div>
                 ) : (
-                  <div className="mt-0.5 flex items-center gap-2">
-                    <span className="text-xs text-slate-400">{r.cost} pts</span>
-                    <button
-                      onClick={() => startEdit(r)}
-                      className="text-xs text-slate-500 hover:text-slate-300"
-                    >
-                      Edit
-                    </button>
-                  </div>
+                  <>
+                    <div className="break-words text-sm text-slate-100">
+                      {r.name}
+                    </div>
+                    {r.description && (
+                      <div className="mt-0.5 whitespace-pre-line break-words text-xs text-slate-400">
+                        {r.description}
+                      </div>
+                    )}
+                    <div className="mt-0.5 flex items-center gap-2">
+                      <span className="whitespace-nowrap text-xs text-slate-400">
+                        {r.cost} pts
+                      </span>
+                      <button
+                        onClick={() => startEdit(r)}
+                        className="text-xs text-slate-500 hover:text-slate-300"
+                      >
+                        Edit
+                      </button>
+                    </div>
+                  </>
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
@@ -288,3 +367,9 @@ export default function RewardsPage() {
     </div>
   );
 }
+
+const COST_HINT = `Enter a name and a whole-number cost (1–${REWARD_COST_MAX}).`;
+
+// A whole-number cost from an input's text, else null. The server validates
+// the same range with the same helper; this only gates the request.
+const parseCost = (raw: string) => parseIntInRange(raw, 1, REWARD_COST_MAX);
