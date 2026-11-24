@@ -13,3 +13,13 @@ export function formatPoints(n: number): string {
 export function formatSignedPoints(n: number): string {
   return n > 0 ? `+${n}` : formatPoints(n);
 }
+
+// A balance typed into the Adjust box: optional leading minus (a hyphen, or
+// the U+2212 the dashboard displays) then digits, within [-max, max]. Returns
+// null for anything else ("", "-", "1.5", "1e3", " 7 x").
+export function parseBalanceDraft(draft: string, max: number): number | null {
+  const t = draft.trim().replace(/^\u2212/, "-");
+  if (!/^-?\d+$/.test(t)) return null;
+  const n = Number(t);
+  return Number.isSafeInteger(n) && n >= -max && n <= max ? n : null;
+}

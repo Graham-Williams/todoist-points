@@ -118,18 +118,21 @@ export function getBalance(): number {
 }
 
 export const BALANCE_MAX = 1000000;
+// The balance may be set below zero (habit penalties can take it there anyway).
+export const BALANCE_MIN = -BALANCE_MAX;
 
-// Set the balance to exactly `target` by recording the needed delta as a
-// balance_adjustments row (read + insert in one transaction). A zero delta
-// records nothing. Ledger history and lifetime totals are untouched.
+// Set the balance to exactly `target` (an integer in [BALANCE_MIN,
+// BALANCE_MAX]) by recording the needed delta as a balance_adjustments row
+// (read + insert in one transaction). A zero delta records nothing. Ledger
+// history and lifetime totals are untouched.
 export function setBalance(target: number): {
   ok: true;
   newBalance: number;
   delta: number;
 } {
-  if (!Number.isInteger(target) || target < 0 || target > BALANCE_MAX) {
+  if (!Number.isInteger(target) || target < BALANCE_MIN || target > BALANCE_MAX) {
     throw new RangeError(
-      `Balance must be an integer between 0 and ${BALANCE_MAX}`
+      `Balance must be an integer between ${BALANCE_MIN} and ${BALANCE_MAX}`
     );
   }
   const db = getDb();

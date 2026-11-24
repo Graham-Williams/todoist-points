@@ -1,13 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { formatPoints } from "@/lib/points";
+import { formatPoints, parseBalanceDraft } from "@/lib/points";
 
 const MAX = 1000000;
 
-// The dashboard Balance card, with a small "Adjust" control: an inline number
-// input prefilled with the current balance + Save/Cancel, plus a "Reset to 0"
-// shortcut behind a two-step confirm (no native confirm()). Both POST
+// The dashboard Balance card, with a small "Adjust" control: an inline input
+// prefilled with the current balance (which may be negative) + Save/Cancel,
+// plus a "Reset to 0" shortcut behind a two-step confirm (no native confirm()). Both POST
 // /api/balance, which records the difference as a balance adjustment, then
 // dispatch `todoist:synced` so DashboardRefresh re-runs getStats().
 export default function BalanceCard({ balance }: { balance: number }) {
@@ -16,9 +16,8 @@ export default function BalanceCard({ balance }: { balance: number }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const n = Number(draft);
-  const draftValid =
-    draft.trim() !== "" && Number.isInteger(n) && n >= 0 && n <= MAX;
+  const n = parseBalanceDraft(draft, MAX);
+  const draftValid = n !== null;
 
   function startEdit() {
     setError(null);
@@ -72,10 +71,14 @@ export default function BalanceCard({ balance }: { balance: number }) {
       {mode === "edit" && (
         <div className="mt-3 space-y-2">
           <div className="flex flex-wrap items-center gap-2">
+            {/* A text input, not type="number": phone number pads (iOS's
+                numeric keypad in particular) have no minus key, and a
+                negative balance must be typeable. */}
             <input
-              type="number"
-              min={0}
-              max={MAX}
+              type="text"
+              inputMode="text"
+              autoComplete="off"
+              spellCheck={false}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               disabled={busy}
@@ -83,7 +86,7 @@ export default function BalanceCard({ balance }: { balance: number }) {
               className="w-28 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-right text-base text-white focus:border-emerald-500 focus:outline-none disabled:opacity-50 sm:text-xs"
             />
             <button
-              onClick={() => submit(n)}
+              onClick={() => n !== null && submit(n)}
               disabled={busy || !draftValid}
               className="rounded-md bg-emerald-600 px-2.5 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-40 sm:py-1"
             >
