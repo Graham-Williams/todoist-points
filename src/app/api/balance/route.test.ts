@@ -38,7 +38,7 @@ test("setting the balance records the delta; lifetime totals are untouched", asy
   assert.deepEqual(await res.json(), { ok: true, newBalance: 50, delta: -70 });
   const stats = q.getStats();
   assert.equal(stats.balance, 50);
-  assert.equal(stats.totalEarned, 120);
+  assert.equal(stats.netEarned, 120);
   assert.equal(stats.totalSpent, 0);
   assert.equal(stats.history.length, 1);
   assert.equal(stats.history[0].kind, "adjust");
@@ -65,7 +65,7 @@ test("a zero delta inserts nothing", async () => {
 
 test("invalid targets are rejected with 400 and change nothing", async () => {
   earn(5);
-  for (const bad of [-1, 1000001, 1.5, "abc", "", null, true, [], {}, undefined]) {
+  for (const bad of [-1000001, 1000001, 1.5, -2.5, "abc", "-", "", null, true, [], {}, undefined]) {
     const res = await POST(post({ balance: bad }));
     assert.equal(res.status, 400, JSON.stringify(bad));
   }
@@ -74,9 +74,24 @@ test("invalid targets are rejected with 400 and change nothing", async () => {
   assert.equal((await POST(new Request("http://localhost/api/balance", { method: "POST", body: "null" }))).status, 400);
   assert.equal(q.getBalance(), 5);
   // Boundaries are accepted.
+  assert.equal((await POST(post({ balance: -1000000 }))).status, 200);
+  assert.equal(q.getBalance(), -1000000);
   assert.equal((await POST(post({ balance: 1000000 }))).status, 200);
   assert.equal((await POST(post({ balance: "12" }))).status, 200);
   assert.equal(q.getBalance(), 12);
+});
+
+test("the balance can be set below zero", async () => {
+  earn(20);
+  const res = await POST(post({ balance: -50 }));
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { ok: true, newBalance: -50, delta: -70 });
+  assert.equal(q.getBalance(), -50);
+  assert.equal(q.getStats().history[0].description, "Balance set to -50");
+  // A numeric string works too, and earnings keep counting from there.
+  assert.equal((await POST(post({ balance: "-3" }))).status, 200);
+  earn(5);
+  assert.equal(q.getBalance(), 2);
 });
 
 test("redeem checks the adjusted balance", async () => {

@@ -1,11 +1,15 @@
 "use client";
 
 import { useState } from "react";
+import { MINUS } from "@/lib/points";
 
-// Per-earning control cluster on the dashboard "Recent earnings" list. Combines
-// two inline actions on each row (Edit · Remove), each unobtrusive until clicked:
+// Per-row control cluster on the dashboard "Recent earnings/losses" list.
+// Combines two inline actions on each row (Edit · Remove), each unobtrusive
+// until clicked. `points` is signed: a loss (missed-habit penalty) is negative.
 //
-//  - Edit: reveals a number input pre-filled with the current points + Save /
+//  - Edit: reveals a number input pre-filled with the points' MAGNITUDE (a
+//    loss shows a "−" before the box and stays a loss: the server keeps the
+//    row's sign) + Save /
 //    Cancel (mirrors the /rewards inline-cost edit). Client-validates an integer
 //    >= 1 (Save disabled otherwise), PATCHes /api/ledger/<id>, then dispatches the
 //    global `todoist:synced` event so DashboardRefresh re-runs getStats()
@@ -26,7 +30,9 @@ export default function EarningControls({
   points: number;
 }) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(String(points));
+  const loss = points < 0;
+  const magnitude = Math.abs(points);
+  const [draft, setDraft] = useState(String(magnitude));
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -39,13 +45,13 @@ export default function EarningControls({
   function startEdit() {
     setError(null);
     setConfirming(false);
-    setDraft(String(points));
+    setDraft(String(magnitude));
     setEditing(true);
   }
 
   function cancelEdit() {
     setEditing(false);
-    setDraft(String(points));
+    setDraft(String(magnitude));
   }
 
   async function save() {
@@ -68,8 +74,11 @@ export default function EarningControls({
         setBusy(false);
         return;
       }
-      // Reuse the global refresh machinery to update balance + list. The
-      // component unmounts on refresh; no need to reset local state.
+      // Close the editor, then reuse the global refresh machinery to update
+      // balance + list. router.refresh() keeps this component mounted (same
+      // row key), so its state must be reset here or it sticks on "Saving…".
+      setEditing(false);
+      setBusy(false);
       window.dispatchEvent(new CustomEvent("todoist:synced"));
     } catch {
       setError("Failed to update");
@@ -116,12 +125,18 @@ export default function EarningControls({
   if (editing) {
     return (
       <div className="flex shrink-0 items-center gap-2">
+        {loss && (
+          <span className="text-sm font-semibold text-rose-400" aria-hidden>
+            {MINUS}
+          </span>
+        )}
         <input
           type="number"
           min={1}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           disabled={busy}
+          aria-label={loss ? "Points lost" : "Points earned"}
           className="w-20 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-right text-base text-white focus:border-emerald-500 focus:outline-none disabled:opacity-50 sm:text-xs"
         />
         <span className="text-xs text-slate-400">pts</span>
@@ -175,7 +190,7 @@ export default function EarningControls({
       </span>
       <button
         onClick={() => setConfirming(true)}
-        aria-label="Remove earning"
+        aria-label={loss ? "Remove loss" : "Remove earning"}
         className="hover:text-rose-400"
       >
         Remove

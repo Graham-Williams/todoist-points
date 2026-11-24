@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import SortableList from "../SortableList";
+import { formatPoints } from "@/lib/points";
 
 interface Reward {
   id: number;
@@ -157,7 +158,12 @@ export default function RewardsPage() {
         <h1 className="text-2xl font-bold">Rewards</h1>
         <span className="text-sm text-slate-400">
           Balance:{" "}
-          <span className="font-semibold text-emerald-400">{balance}</span> pts
+          <span
+            className={`font-semibold ${balance < 0 ? "text-rose-400" : "text-emerald-400"}`}
+          >
+            {formatPoints(balance)}
+          </span>{" "}
+          pts
         </span>
       </div>
 

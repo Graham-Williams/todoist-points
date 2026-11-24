@@ -3,19 +3,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import SortableList from "../SortableList";
 import { lastNLocalDates, localDateStr } from "@/lib/dates";
+import { MINUS, formatPoints } from "@/lib/points";
 
 interface Habit {
   id: number;
   name: string;
   description: string | null;
   points: number;
+  penalty: number | null; // points lost when marked not done
 }
 
 type Status = "done" | "missed";
 
 interface HabitWeek {
   habits: Habit[];
-  checks: { habit_id: number; date: string; status: Status }[];
+  // points: the signed amount the mark earned/lost (null if none).
+  checks: { habit_id: number; date: string; status: Status; points: number | null }[];
   bonuses: { date: string; points: number | null }[];
   bonusPoints: number;
 }
@@ -30,7 +33,25 @@ function nextStatus(current: Status | undefined): Status | null {
   return null;
 }
 
-const STATUS_WORDS: Record<Status, string> = { done: "done", missed: "missed" };
+const STATUS_WORDS: Record<Status, string> = { done: "done", missed: "not done" };
+
+// An amount lost, e.g. minus(5) = "−5" (a real minus sign, U+2212).
+const minus = (n: number) => formatPoints(-n);
+
+// "Not done (−5)" etc. for a cell's tooltip and aria-label.
+function statusText(status: Status | undefined, points: number | null | undefined): string {
+  if (!status) return "not marked";
+  if (status === "missed" && points != null && points < 0) {
+    return `${STATUS_WORDS.missed} (${minus(-points)})`;
+  }
+  return STATUS_WORDS[status];
+}
+
+// A penalty amount from a form: a whole number in [1, 100000], else null.
+function parsePenalty(raw: string): number | null {
+  const n = Number(raw);
+  return raw.trim() !== "" && Number.isInteger(n) && n >= 1 && n <= 100000 ? n : null;
+}
 
 // "Mon" / "23" for a local YYYY-MM-DD date.
 function dayLabel(date: string): { weekday: string; day: number } {
@@ -59,6 +80,8 @@ export default function HabitsPage() {
   const [habits, setHabits] = useState<Habit[]>([]);
   // habit|date -> its mark; absent = not marked.
   const [checks, setChecks] = useState<Map<string, Status>>(new Map());
+  // habit|date -> the signed points that mark earned/lost (null = none).
+  const [checkPoints, setCheckPoints] = useState<Map<string, number | null>>(new Map());
   const [bonuses, setBonuses] = useState<Map<string, number | null>>(new Map());
   const [bonusPoints, setBonusPoints] = useState(10);
   const [loading, setLoading] = useState(true);
@@ -68,6 +91,8 @@ export default function HabitsPage() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [points, setPoints] = useState("5");
+  const [hasPenalty, setHasPenalty] = useState(false);
+  const [penalty, setPenalty] = useState("5");
   const [adding, setAdding] = useState(false);
 
   // Inline edit of one habit (name / description / points).
@@ -75,6 +100,8 @@ export default function HabitsPage() {
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editPoints, setEditPoints] = useState("");
+  const [editHasPenalty, setEditHasPenalty] = useState(false);
+  const [editPenalty, setEditPenalty] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
 
   // Remove (two-step confirm) and bonus edit.
@@ -113,6 +140,9 @@ export default function HabitsPage() {
       setChecks(
         new Map(data.checks.map((c) => [checkKey(c.habit_id, c.date), c.status]))
       );
+      setCheckPoints(
+        new Map(data.checks.map((c) => [checkKey(c.habit_id, c.date), c.points]))
+      );
       setBonuses(new Map(data.bonuses.map((b) => [b.date, b.points])));
       setBonusPoints(data.bonusPoints);
       setError(null);
@@ -143,14 +173,27 @@ export default function HabitsPage() {
       setBusyCells(new Set(busyRef.current));
     };
     setBusy(true);
-    const show = (status: Status | null | undefined) =>
+    const prevPoints = checkPoints.get(key);
+    const show = (status: Status | null | undefined, pts: number | null | undefined) => {
       setChecks((m) => {
         const copy = new Map(m);
         if (status) copy.set(key, status);
         else copy.delete(key);
         return copy;
       });
-    show(next);
+      setCheckPoints((m) => {
+        const copy = new Map(m);
+        if (status) copy.set(key, pts ?? null);
+        else copy.delete(key);
+        return copy;
+      });
+    };
+    // Optimistic amount from the habit's current settings; the reload after
+    // the request shows what the server actually recorded.
+    show(
+      next,
+      next === "done" ? habit.points : next === "missed" && habit.penalty ? -habit.penalty : null
+    );
     setError(null);
     pendingToggles.current += 1;
     try {
@@ -166,7 +209,7 @@ export default function HabitsPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? "Failed to update habit");
     } catch (err) {
-      show(prev); // revert
+      show(prev, prevPoints); // revert
       setError((err as Error).message);
     } finally {
       setBusy(false);
@@ -186,18 +229,25 @@ export default function HabitsPage() {
       setError("Enter a name and a whole number of points (1–100000).");
       return;
     }
+    const p = hasPenalty ? parsePenalty(penalty) : null;
+    if (hasPenalty && p === null) {
+      setError("Enter a whole number of points to lose (1–100000).");
+      return;
+    }
     setAdding(true);
     try {
       const res = await fetch("/api/habits", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, description, points: n }),
+        body: JSON.stringify({ name, description, points: n, penalty: p }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? "Failed to add habit");
       setName("");
       setDescription("");
       setPoints("5");
+      setHasPenalty(false);
+      setPenalty("5");
       await load();
     } catch (err) {
       setError((err as Error).message);
@@ -213,6 +263,8 @@ export default function HabitsPage() {
     setEditName(h.name);
     setEditDescription(h.description ?? "");
     setEditPoints(String(h.points));
+    setEditHasPenalty(h.penalty != null);
+    setEditPenalty(String(h.penalty ?? h.points));
   }
 
   async function saveEdit(id: number) {
@@ -221,13 +273,23 @@ export default function HabitsPage() {
       setError("Enter a name and a whole number of points (1–100000).");
       return;
     }
+    const p = editHasPenalty ? parsePenalty(editPenalty) : null;
+    if (editHasPenalty && p === null) {
+      setError("Enter a whole number of points to lose (1–100000).");
+      return;
+    }
     setError(null);
     setSavingEdit(true);
     try {
       const res = await fetch(`/api/habits/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: editName, description: editDescription, points: n }),
+        body: JSON.stringify({
+          name: editName,
+          description: editDescription,
+          points: n,
+          penalty: p, // null clears it
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? "Failed to save habit");
@@ -360,8 +422,9 @@ export default function HabitsPage() {
 
       <p className="text-sm text-slate-400">
         Tap a day once to mark a habit done (earns its points), again to mark
-        it missed, and again to clear it. Mark every habit done in a day to earn
-        the bonus too{bonusPoints === 0 ? " (currently off)" : ""}.
+        it not done (loses points if the habit has a penalty), and again to
+        clear it. Mark every habit done in a day to earn the bonus
+        too{bonusPoints === 0 ? " (currently off)" : ""}.
       </p>
 
       {loading && <p className="text-slate-500">Loading…</p>}
@@ -446,6 +509,19 @@ export default function HabitsPage() {
                               className="w-24 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-right text-base text-white focus:border-emerald-500 focus:outline-none disabled:opacity-50 sm:text-xs"
                             />
                             <span className="text-xs text-slate-400">pts</span>
+                          </div>
+                          <PenaltyField
+                            checked={editHasPenalty}
+                            onCheckedChange={(on) => {
+                              setEditHasPenalty(on);
+                              if (on) setEditPenalty(editPoints);
+                            }}
+                            value={editPenalty}
+                            onValueChange={setEditPenalty}
+                            disabled={savingEdit}
+                            compact
+                          />
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
                             <button
                               onClick={() => saveEdit(h.id)}
                               disabled={savingEdit}
@@ -462,8 +538,8 @@ export default function HabitsPage() {
                             </button>
                           </div>
                           <p className="mt-1 text-xs text-slate-500">
-                            New points apply to future ticks; points already
-                            earned stay as they were.
+                            New points and penalties apply to future ticks;
+                            points already earned or lost stay as they were.
                           </p>
                         </div>
                       </div>
@@ -495,8 +571,14 @@ export default function HabitsPage() {
                           </div>
                         ) : (
                           <div className="mt-0.5 flex flex-wrap items-center gap-x-2">
-                            <span className="whitespace-nowrap text-xs text-emerald-400">
-                              +{h.points} pts
+                            <span className="whitespace-nowrap text-xs">
+                              <span className="text-emerald-400">+{h.points} pts</span>
+                              {h.penalty != null && (
+                                <span className="text-rose-400">
+                                  {" / "}
+                                  {minus(h.penalty)} if not done
+                                </span>
+                              )}
                             </span>
                             <button
                               onClick={() => startEdit(h)}
@@ -518,6 +600,9 @@ export default function HabitsPage() {
                   <div className={`flex self-end sm:shrink-0 sm:self-auto ${CELLS_GAP}`}>
                     {days.map((d) => {
                       const status = checks.get(checkKey(h.id, d));
+                      const pts = checkPoints.get(checkKey(h.id, d));
+                      const lost = status === "missed" && pts != null && pts < 0;
+                      const label = statusText(status, pts);
                       const busy = busyCells.has(checkKey(h.id, d));
                       const isToday = d === today;
                       const { weekday, day } = dayLabel(d);
@@ -528,20 +613,31 @@ export default function HabitsPage() {
                           onClick={() => cycle(h, d)}
                           disabled={busy}
                           aria-busy={busy}
-                          aria-label={`${h.name}, ${weekday} ${day}: ${
-                            status ? STATUS_WORDS[status] : "not marked"
-                          }`}
+                          aria-label={`${h.name}, ${weekday} ${day}: ${label}`}
+                          title={status ? label.charAt(0).toUpperCase() + label.slice(1) : undefined}
                           className={`${CELL} flex items-center justify-center rounded-md border text-lg font-bold transition-colors disabled:cursor-wait disabled:opacity-60 ${
                             status === "done"
                               ? "border-emerald-500 bg-emerald-600 text-white hover:bg-emerald-500"
-                              : status === "missed"
+                              : lost
+                                ? "border-rose-500 bg-rose-700 text-white hover:bg-rose-600"
+                                : status === "missed"
                                 ? "border-rose-700 bg-rose-950/60 text-rose-300 hover:bg-rose-900/60"
                                 : `bg-slate-800/40 text-transparent hover:bg-slate-800 ${
                                     isToday ? "border-emerald-800" : "border-slate-700"
                                   }`
                           }`}
                         >
-                          <span aria-hidden>{status === "missed" ? "✗" : "✓"}</span>
+                          {lost ? (
+                            // A penalised miss: the ✗ plus the amount lost.
+                            <span aria-hidden className="flex flex-col items-center leading-none">
+                              <span>✗</span>
+                              <span className="mt-0.5 text-[9px] font-semibold">
+                                {minus(-pts!)}
+                              </span>
+                            </span>
+                          ) : (
+                            <span aria-hidden>{status === "missed" ? "✗" : "✓"}</span>
+                          )}
                         </button>
                       );
                     })}
@@ -621,6 +717,16 @@ export default function HabitsPage() {
             required
           />
         </div>
+        <PenaltyField
+          checked={hasPenalty}
+          onCheckedChange={(on) => {
+            setHasPenalty(on);
+            if (on) setPenalty(points);
+          }}
+          value={penalty}
+          onValueChange={setPenalty}
+          disabled={adding}
+        />
         <button
           type="submit"
           disabled={adding}
@@ -629,6 +735,61 @@ export default function HabitsPage() {
           {adding ? "Adding…" : "Add habit"}
         </button>
       </form>
+    </div>
+  );
+}
+
+// "Lose points if not done" checkbox, plus the amount once it is ticked. The
+// amount starts at the habit's points (the caller seeds it on tick).
+function PenaltyField({
+  checked,
+  onCheckedChange,
+  value,
+  onValueChange,
+  disabled,
+  compact = false,
+}: {
+  checked: boolean;
+  onCheckedChange: (on: boolean) => void;
+  value: string;
+  onValueChange: (v: string) => void;
+  disabled: boolean;
+  compact?: boolean;
+}) {
+  return (
+    <div
+      className={`flex flex-wrap items-center gap-x-3 gap-y-2 ${
+        compact ? "mt-2" : "w-full sm:w-auto sm:pb-1.5"
+      }`}
+    >
+      <label className="flex items-center gap-2 text-sm text-slate-300 sm:text-xs">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => onCheckedChange(e.target.checked)}
+          disabled={disabled}
+          className="h-4 w-4 accent-rose-500"
+        />
+        Lose points if not done
+      </label>
+      {checked && (
+        <span className="flex items-center gap-2">
+          <span className="text-sm text-rose-400 sm:text-xs" aria-hidden>
+            {MINUS}
+          </span>
+          <input
+            type="number"
+            min={1}
+            max={100000}
+            value={value}
+            onChange={(e) => onValueChange(e.target.value)}
+            disabled={disabled}
+            aria-label="Points lost if not done"
+            className="w-24 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-right text-base text-white focus:border-rose-500 focus:outline-none disabled:opacity-50 sm:text-xs"
+          />
+          <span className="text-xs text-slate-400">pts</span>
+        </span>
+      )}
     </div>
   );
 }

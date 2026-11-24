@@ -42,12 +42,16 @@ export interface HabitInput {
   name?: string;
   description?: string | null;
   points?: number;
+  penalty?: number | null;
 }
 
 // Validate a habit body for create (all of name + points required, description
-// optional) or for a partial edit (any subset, but at least one field).
-// name: trimmed, 1–100 chars. description: see parseDescription. points:
-// integer in [1, 100000].
+// and penalty optional) or for a partial edit (any subset, but at least one
+// field). name: trimmed, 1–100 chars. description: see parseDescription.
+// points: integer in [1, 100000]. penalty (points lost when marked missed):
+// null or 0 = no penalty (clears it on edit), else an integer in [1, 100000].
+// An absent penalty is left out of the result (none on create, unchanged on
+// edit).
 export function parseHabitInput(
   body: unknown,
   partial: boolean
@@ -84,8 +88,18 @@ export function parseHabitInput(
     }
     value.points = points;
   }
+  if (b.penalty !== undefined) {
+    const penalty = b.penalty === null ? 0 : parseIntInRange(b.penalty, 0, HABIT_POINTS_MAX);
+    if (penalty === null) {
+      return {
+        ok: false,
+        error: `Penalty must be an integer between 0 and ${HABIT_POINTS_MAX}`,
+      };
+    }
+    value.penalty = penalty === 0 ? null : penalty;
+  }
   if (partial && Object.keys(value).length === 0) {
-    return { ok: false, error: "Nothing to update (name, description or points)" };
+    return { ok: false, error: "Nothing to update (name, description, points or penalty)" };
   }
   return { ok: true, value };
 }

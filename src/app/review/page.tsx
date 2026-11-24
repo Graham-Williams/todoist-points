@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import SortableList from "../SortableList";
+import { formatPoints } from "@/lib/points";
 
 interface ReviewTask {
   completion_id: string;
@@ -347,7 +348,11 @@ export default function ReviewPage() {
         {balance !== null && (
           <span className="whitespace-nowrap text-sm text-slate-400">
             Balance:{" "}
-            <span className="font-semibold text-emerald-400">{balance}</span>{" "}
+            <span
+              className={`font-semibold ${balance < 0 ? "text-rose-400" : "text-emerald-400"}`}
+            >
+              {formatPoints(balance)}
+            </span>{" "}
             pts
           </span>
         )}

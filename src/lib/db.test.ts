@@ -1,10 +1,14 @@
-// Migration test: a DB created by the first habits preview (before
-// habits.description and habit_checks.status existed) gains the new columns on
-// init, keeps its rows, and ends up with the same schema as a fresh DB.
+// Migration tests: a DB created by the first habits preview (before
+// habits.description and habit_checks.status existed), or by the release before
+// habits.penalty, gains the new columns on init, keeps its rows, and ends up
+// with the same schema as a fresh DB.
 import "../test-support/hooks.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import Database from "better-sqlite3";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 const { getDb, initSchema } = await import("./db.ts");
 
@@ -36,6 +40,7 @@ test("old-shape habit tables migrate additively and match a fresh DB", () => {
   assert.equal(habit.name, "Stretch");
   assert.equal(habit.points, 5);
   assert.equal(habit.description, null);
+  assert.equal(habit.penalty, null);
   const check = db.prepare(`SELECT * FROM habit_checks`).get() as Record<string, unknown>;
   assert.deepEqual(
     { habit_id: check.habit_id, date: check.date, ledger_id: check.ledger_id, status: check.status },
@@ -46,5 +51,40 @@ test("old-shape habit tables migrate additively and match a fresh DB", () => {
   initSchema(fresh);
   for (const table of ["habits", "habit_checks"]) {
     assert.deepEqual(columns(db, table), columns(fresh, table), table);
+  }
+});
+
+test("a DB from before habits.penalty gains it (NULL = no penalty) and matches a fresh DB", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "todoist-points-mig-"));
+  const old = new Database(path.join(dir, "old.db"));
+  try {
+    old.exec(`
+      CREATE TABLE habits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, points INTEGER NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')), archived_at TEXT, description TEXT);
+      CREATE TABLE habit_checks (
+        habit_id INTEGER NOT NULL, date TEXT NOT NULL, ledger_id INTEGER,
+        status TEXT NOT NULL DEFAULT 'done', PRIMARY KEY (habit_id, date));
+      INSERT INTO habits (name, points, description) VALUES ('Read', 7, 'evening');
+      INSERT INTO habit_checks (habit_id, date, ledger_id, status) VALUES (1, '2026-11-20', NULL, 'missed');
+    `);
+    initSchema(old);
+    initSchema(old);
+    assert.deepEqual(
+      old.prepare(`SELECT name, points, description, penalty FROM habits`).get(),
+      { name: "Read", points: 7, description: "evening", penalty: null }
+    );
+    assert.deepEqual(
+      old.prepare(`SELECT status, ledger_id FROM habit_checks`).get(),
+      { status: "missed", ledger_id: null }
+    );
+    const fresh = new Database(":memory:");
+    initSchema(fresh);
+    for (const table of ["habits", "habit_checks"]) {
+      assert.deepEqual(columns(old, table), columns(fresh, table), table);
+    }
+  } finally {
+    old.close();
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
