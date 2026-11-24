@@ -98,21 +98,25 @@ export function initSchema(db: Database.Database) {
 
     -- Daily habits (see src/lib/habits.ts). "Remove" sets archived_at (soft
     -- delete) so past checks and their ledger rows keep their history.
-    -- description was added after the first preview shipped: older DBs get it
-    -- from addColumnIfMissing below, so keep it LAST here to match.
+    -- description and penalty were added after the first preview shipped:
+    -- older DBs get them from addColumnIfMissing below, so keep them LAST here,
+    -- in the same order, to match. penalty: points lost when the habit is
+    -- marked missed (NULL = no penalty).
     CREATE TABLE IF NOT EXISTS habits (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       name        TEXT NOT NULL,
       points      INTEGER NOT NULL,
       created_at  TEXT NOT NULL DEFAULT (datetime('now')),
       archived_at TEXT,
-      description TEXT
+      description TEXT,
+      penalty     INTEGER
     );
 
     -- One row per habit marked on a client-local calendar date (YYYY-MM-DD).
-    -- status 'done' earns points: ledger_id is the 'earn' row it created (it
-    -- may since have been removed from the dashboard; clearing tolerates
-    -- that). status 'missed' earns nothing and has ledger_id NULL. status was
+    -- ledger_id is the 'earn' row the mark owns: for status 'done' the
+    -- positive row it earned; for status 'missed' the NEGATIVE penalty row
+    -- when the habit had a penalty, else NULL. The row may since have been
+    -- removed from the dashboard; every transition tolerates that. status was
     -- added later (see addColumnIfMissing), so it stays LAST here.
     CREATE TABLE IF NOT EXISTS habit_checks (
       habit_id INTEGER NOT NULL,
@@ -141,6 +145,7 @@ export function initSchema(db: Database.Database) {
   // table. A fresh DB already has these columns from the CREATE above.
   addColumnIfMissing(db, "habits", "description", "TEXT");
   addColumnIfMissing(db, "habit_checks", "status", "TEXT NOT NULL DEFAULT 'done'");
+  addColumnIfMissing(db, "habits", "penalty", "INTEGER");
 }
 
 function addColumnIfMissing(
