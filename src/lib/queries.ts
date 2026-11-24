@@ -166,7 +166,8 @@ export function getRewards(): Reward[] {
 // ---------------------------------------------------------------------------
 // Lists that can be manually reordered. Any other value is rejected by
 // setOrder so a bad/typo'd list name can never write orphan rows.
-export const ORDER_LISTS = new Set(["rewards", "review", "upcoming", "habits"]);
+// ('upcoming' was removed: that list is always sorted by due date.)
+export const ORDER_LISTS = new Set(["rewards", "review", "habits"]);
 
 // item_key -> position for a given list (used to left-join a list's rows so a
 // reload reflects the user's dragged order).

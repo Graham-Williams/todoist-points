@@ -37,13 +37,16 @@ beforeEach(() => {
   );
 });
 
-test("GET lists only due-dated tasks, with saved points and no labels, in drag order", async () => {
+test("GET lists only due-dated tasks, with saved points and no labels, in Todoist's order", async () => {
   await put("c", { points: 15, content: "Dated C" });
-  q.setOrder("upcoming", ["c", "a"]);
+  // A leftover drag order from before Upcoming became due-date-only is ignored.
+  getDb()
+    .prepare(`INSERT INTO list_order (list, item_key, position) VALUES ('upcoming', 'c', 0), ('upcoming', 'a', 1)`)
+    .run();
   const body = await (await GET()).json();
   assert.deepEqual(body.tasks, [
-    { id: "c", content: "Dated C", due: { date: "2026-11-26", is_recurring: false }, points: 15 },
     { id: "a", content: "Dated A", due: { date: "2026-11-25", string: "Nov 25" }, points: null },
+    { id: "c", content: "Dated C", due: { date: "2026-11-26", is_recurring: false }, points: 15 },
     {
       id: "done-before",
       content: "Reopened D",
@@ -51,6 +54,10 @@ test("GET lists only due-dated tasks, with saved points and no labels, in drag o
       points: null,
     },
   ]);
+});
+
+test("Upcoming can't be drag-ordered any more", () => {
+  assert.throws(() => q.setOrder("upcoming", ["a", "c"]), /Unknown list/);
 });
 
 test("an undated task with saved points is listed (due null); one without isn't", async () => {

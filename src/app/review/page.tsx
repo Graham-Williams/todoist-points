@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import SortableList from "../SortableList";
+import { sortByDue } from "@/lib/dueOrder";
 import { formatPoints } from "@/lib/points";
 
 interface ReviewTask {
@@ -12,6 +13,7 @@ interface ReviewTask {
 
 interface TodoistDue {
   date: string;
+  datetime?: string | null;
   string?: string;
 }
 
@@ -79,7 +81,6 @@ export default function ReviewPage() {
   const [upcomingBusy, setUpcomingBusy] = useState<Record<string, boolean>>({});
   const [upcomingLoading, setUpcomingLoading] = useState(true);
   const [upcomingError, setUpcomingError] = useState<string | null>(null);
-  const reorderingUpcoming = useRef(false);
   // Same stale-response guard as Completed, but separate counters: saves and
   // clears in flight, plus a generation bumped when one starts or settles. A
   // refetch that started before (or lands during) a save/clear is dropped, so
@@ -123,7 +124,8 @@ export default function ReviewPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to load upcoming tasks");
       if (pendingUpcoming.current > 0 || gen !== upcomingGen.current) return;
-      const list: UpcomingTask[] = data.tasks ?? [];
+      // Always by due date (the user's local day); not drag-reorderable.
+      const list: UpcomingTask[] = sortByDue(data.tasks ?? []);
       setUpcoming(list);
       // Seed each input from its saved value so it re-displays on reload, but
       // never clobber an input the user is mid-edit on.
@@ -148,11 +150,11 @@ export default function ReviewPage() {
     load();
     loadUpcoming();
     // Refetch both lists when the global AutoSync reports new data — but skip
-    // a list that's mid-reorder, so the sync can't clobber its optimistic order
-    // before the reorder POST persists.
+    // Completed while it's mid-reorder, so the sync can't clobber its
+    // optimistic order before the reorder POST persists.
     const onSynced = () => {
       if (!reorderingReview.current) load();
-      if (!reorderingUpcoming.current) loadUpcoming();
+      loadUpcoming();
     };
     window.addEventListener("todoist:synced", onSynced);
     return () => window.removeEventListener("todoist:synced", onSynced);
@@ -167,24 +169,6 @@ export default function ReviewPage() {
     pendingUpcoming.current -= 1;
     upcomingGen.current += 1;
     if (pendingUpcoming.current === 0) loadUpcoming();
-  }
-
-  async function reorderUpcoming(newItems: UpcomingTask[]) {
-    reorderingUpcoming.current = true;
-    setUpcoming(newItems);
-    try {
-      const res = await fetch("/api/reorder", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ list: "upcoming", order: newItems.map((t) => t.id) }),
-      });
-      if (!res.ok) throw new Error("Failed to save order");
-    } catch (err) {
-      setUpcomingError((err as Error).message);
-      loadUpcoming();
-    } finally {
-      reorderingUpcoming.current = false;
-    }
   }
 
   async function saveUpcoming(task: UpcomingTask) {
@@ -492,67 +476,64 @@ export default function ReviewPage() {
         )}
 
         {upcoming.length > 0 && (
-          <SortableList
-            items={upcoming}
-            getKey={(t) => t.id}
-            onReorder={reorderUpcoming}
-            ulClassName="divide-y divide-slate-800 rounded-xl border border-slate-800"
-            liClassName="px-4 py-3"
-            renderItem={(t) => (
-              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-4">
-                <div className="min-w-0 sm:flex-1">
-                  <div className="break-words text-sm text-slate-100">{t.content}</div>
-                  <div className="mt-1 flex flex-wrap items-center gap-2">
-                    {t.due ? (
-                      <span className="whitespace-nowrap rounded-full border border-emerald-900 bg-emerald-950/40 px-2 py-0.5 text-xs text-emerald-300">
-                        Due {formatDue(t.due)}
-                      </span>
-                    ) : (
-                      <span className="whitespace-nowrap rounded-full border border-slate-700 bg-slate-800 px-2 py-0.5 text-xs text-slate-300">
-                        No due date
-                      </span>
-                    )}
+          <ul className="divide-y divide-slate-800 rounded-xl border border-slate-800">
+            {upcoming.map((t) => (
+              <li key={t.id} className="px-4 py-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-4">
+                  <div className="min-w-0 sm:flex-1">
+                    <div className="break-words text-sm text-slate-100">{t.content}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      {t.due ? (
+                        <span className="whitespace-nowrap rounded-full border border-emerald-900 bg-emerald-950/40 px-2 py-0.5 text-xs text-emerald-300">
+                          Due {formatDue(t.due)}
+                        </span>
+                      ) : (
+                        <span className="whitespace-nowrap rounded-full border border-slate-700 bg-slate-800 px-2 py-0.5 text-xs text-slate-300">
+                          No due date
+                        </span>
+                      )}
+                      {t.points != null && (
+                        <span className="whitespace-nowrap text-xs font-medium text-emerald-400">
+                          Set: {t.points} pts
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 sm:shrink-0">
+                    <input
+                      type="number"
+                      min={1}
+                      max={100000}
+                      placeholder="pts"
+                      aria-label={`Points for ${t.content}`}
+                      value={upcomingInputs[t.id] ?? ""}
+                      onChange={(e) =>
+                        setUpcomingInputs((prev) => ({ ...prev, [t.id]: e.target.value }))
+                      }
+                      disabled={upcomingBusy[t.id]}
+                      className="w-24 shrink-0 rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-right text-base text-white focus:border-emerald-500 focus:outline-none disabled:opacity-50 sm:w-20 sm:text-sm"
+                    />
+                    <button
+                      onClick={() => saveUpcoming(t)}
+                      disabled={upcomingBusy[t.id]}
+                      className="shrink-0 whitespace-nowrap rounded-md bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-40 sm:py-1.5"
+                    >
+                      Save
+                    </button>
                     {t.points != null && (
-                      <span className="whitespace-nowrap text-xs font-medium text-emerald-400">
-                        Set: {t.points} pts
-                      </span>
+                      <button
+                        onClick={() => clearUpcoming(t.id)}
+                        disabled={upcomingBusy[t.id]}
+                        className="shrink-0 whitespace-nowrap rounded-md border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40 sm:py-1.5"
+                      >
+                        Clear
+                      </button>
                     )}
                   </div>
                 </div>
-                <div className="flex items-center gap-2 sm:shrink-0">
-                  <input
-                    type="number"
-                    min={1}
-                    max={100000}
-                    placeholder="pts"
-                    aria-label={`Points for ${t.content}`}
-                    value={upcomingInputs[t.id] ?? ""}
-                    onChange={(e) =>
-                      setUpcomingInputs((prev) => ({ ...prev, [t.id]: e.target.value }))
-                    }
-                    disabled={upcomingBusy[t.id]}
-                    className="w-24 shrink-0 rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-right text-base text-white focus:border-emerald-500 focus:outline-none disabled:opacity-50 sm:w-20 sm:text-sm"
-                  />
-                  <button
-                    onClick={() => saveUpcoming(t)}
-                    disabled={upcomingBusy[t.id]}
-                    className="shrink-0 whitespace-nowrap rounded-md bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-40 sm:py-1.5"
-                  >
-                    Save
-                  </button>
-                  {t.points != null && (
-                    <button
-                      onClick={() => clearUpcoming(t.id)}
-                      disabled={upcomingBusy[t.id]}
-                      className="shrink-0 whitespace-nowrap rounded-md border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40 sm:py-1.5"
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-          />
+              </li>
+            ))}
+          </ul>
         )}
       </section>
     </div>
