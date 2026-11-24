@@ -1,7 +1,7 @@
 // Migration tests: a DB created by the first habits preview (before
-// habits.description and habit_checks.status existed), or by the release before
-// habits.penalty, gains the new columns on init, keeps its rows, and ends up
-// with the same schema as a fresh DB.
+// habits.description and habit_checks.status existed), by the release before
+// habits.penalty, or by one before rewards.description, gains the new columns
+// on init, keeps its rows, and ends up with the same schema as a fresh DB.
 import "../test-support/hooks.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -83,6 +83,31 @@ test("a DB from before habits.penalty gains it (NULL = no penalty) and matches a
     for (const table of ["habits", "habit_checks"]) {
       assert.deepEqual(columns(old, table), columns(fresh, table), table);
     }
+  } finally {
+    old.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a DB from before rewards.description gains it (NULL) and keeps its rewards", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "todoist-points-mig-"));
+  const old = new Database(path.join(dir, "old.db"));
+  try {
+    old.exec(`
+      CREATE TABLE rewards (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, cost INTEGER NOT NULL,
+        active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')));
+      INSERT INTO rewards (name, cost, active) VALUES ('Movie night', 120, 0);
+    `);
+    initSchema(old);
+    initSchema(old);
+    assert.deepEqual(
+      old.prepare(`SELECT name, cost, active, description FROM rewards`).get(),
+      { name: "Movie night", cost: 120, active: 0, description: null }
+    );
+    const fresh = new Database(":memory:");
+    initSchema(fresh);
+    assert.deepEqual(columns(old, "rewards"), columns(fresh, "rewards"));
   } finally {
     old.close();
     fs.rmSync(dir, { recursive: true, force: true });
