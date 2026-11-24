@@ -74,8 +74,11 @@ export default function EarningControls({
         setBusy(false);
         return;
       }
-      // Reuse the global refresh machinery to update balance + list. The
-      // component unmounts on refresh; no need to reset local state.
+      // Close the editor, then reuse the global refresh machinery to update
+      // balance + list. router.refresh() keeps this component mounted (same
+      // row key), so its state must be reset here or it sticks on "Saving…".
+      setEditing(false);
+      setBusy(false);
       window.dispatchEvent(new CustomEvent("todoist:synced"));
     } catch {
       setError("Failed to update");
