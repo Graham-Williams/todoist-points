@@ -1,11 +1,6 @@
 import { NextResponse } from "next/server";
 import { getUpcomingTasks, type TodoistDue } from "@/lib/todoist";
-import {
-  applyOrder,
-  getOrderMap,
-  getTaskOverridesMap,
-  isCompletionProcessed,
-} from "@/lib/queries";
+import { getTaskOverridesMap, isCompletionProcessed } from "@/lib/queries";
 
 // Only the due fields the Review page uses.
 function trimDue(due: TodoistDue | null): TodoistDue | null {
@@ -21,7 +16,8 @@ function trimDue(due: TodoistDue | null): TodoistDue | null {
 // saved (an override row — e.g. its due date was removed in Todoist later; it
 // would still pay out, so it must stay visible and clearable), left-joined with
 // those points. Response: { tasks: [{ id, content, due|null, points|null }] }
-// in the user's drag order (list 'upcoming').
+// in Todoist's order: the Review page sorts by due date itself (in the
+// browser, so "which day" is the user's local day; see src/lib/dueOrder.ts).
 //
 // Excluded, because points set on them could never pay out (sync dedupes on
 // the task id before the override lookup, and a task id is only ever counted
@@ -39,8 +35,7 @@ export async function GET() {
         due: trimDue(t.due),
         points: Object.hasOwn(overrides, t.id) ? overrides[t.id] : null,
       }));
-    const ordered = applyOrder(merged, (t) => t.id, getOrderMap("upcoming"));
-    return NextResponse.json({ tasks: ordered });
+    return NextResponse.json({ tasks: merged });
   } catch (err) {
     console.error(err);
     return NextResponse.json(
