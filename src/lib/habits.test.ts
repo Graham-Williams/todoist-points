@@ -501,3 +501,45 @@ test("createHabit / updateHabit validate the penalty", () => {
   assert.equal(h.updateHabit(id, { name: "E2" })?.penalty, 2);
   assert.equal(h.updateHabit(id, { penalty: null })?.penalty, null);
 });
+
+test("POST/PATCH /api/habits accept a penalty (null/0 = none) and GET returns it", async () => {
+  const created = await list.POST(json("POST", { name: "Floss", points: 5, penalty: 5 }));
+  assert.equal(created.status, 200);
+  const id = (await created.json()).habit.id as number;
+  for (const penalty of [undefined, null, 0]) {
+    const res = await list.POST(json("POST", { name: "Read", points: 5, penalty }));
+    assert.equal((await res.json()).habit.penalty, null, String(penalty));
+  }
+  for (const bad of [-1, 1.5, 100001, "", "abc", true, [3], {}]) {
+    assert.equal(
+      (await list.POST(json("POST", { name: "Ok", points: 5, penalty: bad }))).status, 400, JSON.stringify(bad)
+    );
+  }
+  const patch = (body: unknown) => one.PATCH(json("PATCH", body), { params: Promise.resolve({ id: String(id) }) });
+  // Penalty alone is a valid edit; other edits leave it unchanged.
+  assert.equal((await (await patch({ penalty: 8 })).json()).habit.penalty, 8);
+  assert.equal((await (await patch({ points: 6 })).json()).habit.penalty, 8);
+  for (const bad of [-3, 2.5, 100001, "x"]) {
+    assert.equal((await patch({ penalty: bad })).status, 400, JSON.stringify(bad));
+  }
+  const res = await list.GET(new Request(`http://localhost/api/habits?from=${D}&to=${D}`));
+  const floss = (await res.json()).habits.find((x: { id: number }) => x.id === id);
+  assert.equal(floss.penalty, 8);
+  assert.equal((await (await patch({ penalty: null })).json()).habit.penalty, null);
+  assert.equal((await (await patch({ penalty: 4 })).json()).habit.penalty, 4);
+  assert.equal((await (await patch({ penalty: 0 })).json()).habit.penalty, null);
+});
+
+test("marking a penalised habit missed over HTTP returns the lowered balance", async () => {
+  h.setBonusPoints(0);
+  const today = utcDateStr(new Date());
+  const a = habit("Floss", 5, "2000-01-01 00:00:00");
+  h.updateHabit(a, { penalty: 4 });
+  const put = (body: string) =>
+    checks.PUT(new Request("http://localhost", { method: "PUT", body }), ctx(String(a), today));
+  assert.equal((await (await put('{"status":"missed"}')).json()).newBalance, -4);
+  assert.equal((await (await put('{"status":"done"}')).json()).newBalance, 5);
+  assert.equal((await (await put('{"status":"missed"}')).json()).newBalance, -4);
+  const del = await checks.DELETE(new Request("http://localhost"), ctx(String(a), today));
+  assert.equal((await del.json()).newBalance, 0);
+});

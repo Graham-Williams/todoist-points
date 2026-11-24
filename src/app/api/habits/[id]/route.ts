@@ -4,9 +4,10 @@ import { parseHabitInput, parseId } from "@/lib/validate";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-// PATCH { name?, description?, points? }: edit an active habit (same validation
-// as create; at least one field). Points changes apply to future ticks only —
-// ledger rows already earned keep their value. 404 for unknown/archived.
+// PATCH { name?, description?, points?, penalty? }: edit an active habit (same
+// validation as create; at least one field; penalty null or 0 clears it).
+// Points and penalty changes apply to future marks only — ledger rows already
+// earned or lost keep their value. 404 for unknown/archived.
 export async function PATCH(req: Request, { params }: Ctx) {
   try {
     const id = parseId((await params).id);

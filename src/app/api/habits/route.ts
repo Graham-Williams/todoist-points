@@ -33,9 +33,11 @@ export async function GET(req: Request) {
   }
 }
 
-// POST { name, points, description? }: add a habit. name is trimmed, 1–100
-// chars; points is an integer in [1, 100000]; description is optional text
-// (trimmed, at most 500 chars, blank -> none).
+// POST { name, points, description?, penalty? }: add a habit. name is trimmed,
+// 1–100 chars; points is an integer in [1, 100000]; description is optional
+// text (trimmed, at most 500 chars, blank -> none); penalty (points lost when
+// marked missed) is optional: absent/null/0 = none, else an integer in
+// [1, 100000].
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => null);
@@ -43,10 +45,10 @@ export async function POST(req: Request) {
     if (!parsed.ok) {
       return NextResponse.json({ error: parsed.error }, { status: 400 });
     }
-    const { name, points, description } = parsed.value;
+    const { name, points, description, penalty } = parsed.value;
     return NextResponse.json({
       ok: true,
-      habit: createHabit(name!, points!, description ?? null),
+      habit: createHabit(name!, points!, description ?? null, penalty ?? null),
     });
   } catch (err) {
     console.error(err);
