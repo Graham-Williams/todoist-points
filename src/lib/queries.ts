@@ -24,8 +24,9 @@ export interface Reward {
   created_at: string;
 }
 
-// A recent-earning row prepared for display: the ledger id/points plus the
-// clean task title (legacy provenance suffixes stripped, see earningSource.ts).
+// A recent earning/loss row prepared for display: the ledger id/points plus
+// the clean task title (legacy provenance suffixes stripped, see
+// earningSource.ts). points is signed: a missed-habit penalty is negative.
 export interface RecentEarning {
   id: number;
   points: number;
@@ -44,7 +45,7 @@ export interface HistoryEntry {
 
 export interface DashboardStats {
   balance: number;
-  totalEarned: number;
+  netEarned: number; // every earn row: earnings minus habit penalties
   totalSpent: number;
   recentEarnings: RecentEarning[];
   history: HistoryEntry[];
@@ -52,13 +53,13 @@ export interface DashboardStats {
 
 export function getStats(): DashboardStats {
   const db = getDb();
-  // Only pointed (>0) earnings count. Non-pointed completions are never
-  // recorded, but filter defensively so any stale rows stay invisible.
+  // Net earned: earn rows are positive, except missed-habit penalties, which
+  // are negative earn rows, so the sum is earnings minus losses. Together with
+  // spent and the adjustments it explains the balance:
+  // balance = netEarned - totalSpent + SUM(adjustments).
   const earned =
     (db
-      .prepare(
-        `SELECT COALESCE(SUM(points), 0) AS s FROM ledger WHERE type = 'earn' AND points > 0`
-      )
+      .prepare(`SELECT COALESCE(SUM(points), 0) AS s FROM ledger WHERE type = 'earn'`)
       .get() as { s: number }).s ?? 0;
   // redeem rows store negative points, so spent = -SUM.
   const spent =
@@ -66,10 +67,13 @@ export function getStats(): DashboardStats {
       .prepare(`SELECT COALESCE(SUM(points), 0) AS s FROM ledger WHERE type = 'redeem'`)
       .get() as { s: number }).s ?? 0;
 
+  // Earnings and losses (negative penalty rows) together. Zero-point rows are
+  // never recorded, but are filtered defensively so any stale ones stay
+  // invisible.
   const recentEarnings = (
     db
       .prepare(
-        `SELECT * FROM ledger WHERE type = 'earn' AND points > 0 ORDER BY id DESC LIMIT 20`
+        `SELECT * FROM ledger WHERE type = 'earn' AND points != 0 ORDER BY id DESC LIMIT 20`
       )
       .all() as LedgerEntry[]
   ).map((e): RecentEarning => ({
@@ -92,7 +96,7 @@ export function getStats(): DashboardStats {
 
   return {
     balance: getBalance(),
-    totalEarned: earned,
+    netEarned: earned,
     totalSpent: spent === 0 ? 0 : -spent,
     recentEarnings,
     history,
@@ -291,6 +295,9 @@ export function deleteEarning(
 }
 
 // Edit the points on a single earning (ledger row of type 'earn') by id.
+// `points` is the MAGNITUDE (1..100000): the row keeps its sign, so a loss (a
+// negative missed-habit penalty row) stays a loss — editing a −5 row to 8
+// stores −8 — and a gain stays a gain.
 // INVARIANT: this touches ONLY the ledger row's `points` column. It does NOT
 // touch processed_completions (the completion stays processed, so sync never
 // re-awards it — unchanged by an edit) and does NOT touch source_id /
@@ -309,8 +316,11 @@ export function updateEarningPoints(
   }
   const db = getDb();
   const result = db
-    .prepare(`UPDATE ledger SET points = ? WHERE id = ? AND type = 'earn'`)
-    .run(points, id);
+    .prepare(
+      `UPDATE ledger SET points = CASE WHEN points < 0 THEN -? ELSE ? END
+       WHERE id = ? AND type = 'earn'`
+    )
+    .run(points, points, id);
   return { ok: true, updated: result.changes > 0, newBalance: getBalance() };
 }
 

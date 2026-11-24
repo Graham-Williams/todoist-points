@@ -38,7 +38,7 @@ test("setting the balance records the delta; lifetime totals are untouched", asy
   assert.deepEqual(await res.json(), { ok: true, newBalance: 50, delta: -70 });
   const stats = q.getStats();
   assert.equal(stats.balance, 50);
-  assert.equal(stats.totalEarned, 120);
+  assert.equal(stats.netEarned, 120);
   assert.equal(stats.totalSpent, 0);
   assert.equal(stats.history.length, 1);
   assert.equal(stats.history[0].kind, "adjust");

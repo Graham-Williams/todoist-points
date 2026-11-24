@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import SortableList from "../SortableList";
 import { lastNLocalDates, localDateStr } from "@/lib/dates";
+import { MINUS, formatPoints } from "@/lib/points";
 
 interface Habit {
   id: number;
@@ -34,8 +35,8 @@ function nextStatus(current: Status | undefined): Status | null {
 
 const STATUS_WORDS: Record<Status, string> = { done: "done", missed: "not done" };
 
-// Points shown with a real minus sign (U+2212), e.g. "−5".
-const minus = (n: number) => `\u2212${n}`;
+// An amount lost, e.g. minus(5) = "−5" (a real minus sign, U+2212).
+const minus = (n: number) => formatPoints(-n);
 
 // "Not done (−5)" etc. for a cell's tooltip and aria-label.
 function statusText(status: Status | undefined, points: number | null | undefined): string {
@@ -772,7 +773,7 @@ function PenaltyField({
       {checked && (
         <span className="flex items-center gap-2">
           <span className="text-sm text-rose-400 sm:text-xs" aria-hidden>
-            {"\u2212"}
+            {MINUS}
           </span>
           <input
             type="number"

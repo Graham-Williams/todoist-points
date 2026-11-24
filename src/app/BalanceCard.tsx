@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { formatPoints } from "@/lib/points";
 
 const MAX = 1000000;
 
@@ -58,7 +59,15 @@ export default function BalanceCard({ balance }: { balance: number }) {
           </button>
         )}
       </div>
-      <div className="mt-1 text-3xl font-bold text-emerald-400">{balance}</div>
+      {/* The balance can go below zero (missed-habit penalties); then it is
+          rose with a "−" so it reads as owed at a glance. */}
+      <div
+        className={`mt-1 text-3xl font-bold ${
+          balance < 0 ? "text-rose-400" : "text-emerald-400"
+        }`}
+      >
+        {formatPoints(balance)}
+      </div>
 
       {mode === "edit" && (
         <div className="mt-3 space-y-2">

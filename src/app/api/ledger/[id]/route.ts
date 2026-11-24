@@ -33,7 +33,8 @@ export async function DELETE(
 }
 
 // PATCH: edit the points on a single earning (ledger row of type 'earn') by id.
-// Body: { points } — integer in [1, 100000]. Updates the ledger row's points
+// Body: { points } — integer in [1, 100000], the MAGNITUDE: a loss (negative
+// penalty row) stays negative, a gain stays positive. Updates the ledger row's points
 // ONLY; processed_completions is untouched so sync never re-awards it. Redeem
 // rows can't be edited here (updateEarningPoints guards on type = 'earn'), so a
 // redeem id reports updated=false → 404.
