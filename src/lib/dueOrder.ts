@@ -3,7 +3,7 @@
 // user's local day: the server runs in UTC and the user does not.
 //
 // Order: earliest due first (so overdue tasks lead). Within a day, timed tasks
-// come first in time order, then all-day tasks (as Todoist lists them). Tasks
+// come first in time order, then all-day tasks (Todoist's convention). Tasks
 // with no due date (listed only because points are saved) go last. Ties break
 // on content, then id, so the order is stable across reloads.
 
